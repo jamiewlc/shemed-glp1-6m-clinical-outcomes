@@ -1,7 +1,7 @@
 # Digital-first delivery of GLP-1 receptor agonist therapy in a large real-world cohort of women
 
 Code implementing analyses from the paper: 
-> John Deanfield, Jamie L. C. Wong, Michail Katsoulis, Emma Deanfield, Nicholas Freemantle, Raj Thakkar, Riyaz Patel, Rachael Joy, Matthew Noble, Donna H. Ryan. Digital-first delivery of GLP-1 receptor agonist therapy in a large real-world cohort of women.
+> Deanfield J, Wong JLC, Katsoulis M, Deanfield E, Freemantle N, Thakkar R, Patel R, Joy R, Noble M, Ryan DH. Digital-first delivery of GLP-1 receptor agonist therapy in a large real-world cohort of women. (Manuscript under review).
 
 
 ## Overview
