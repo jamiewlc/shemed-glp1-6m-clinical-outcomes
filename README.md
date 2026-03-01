@@ -6,7 +6,7 @@ Code implementing analyses from the paper:
 
 ## Overview
 
-The R Markdown file reproduces all statistical analyses, figures, and tables presented in the manuscript and supplementary materials, including longitudinal weight modelling, discontinuation analyses, subgroup analyses, and biochemical outcomes.
+The R Markdown file reproduces all statistical analyses, figures, and tables presented in the manuscript and supplementary materials.
 
 
 ## Data Availability
