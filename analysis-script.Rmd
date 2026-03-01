@@ -1672,7 +1672,7 @@ Export table (csv and gt html)
 
 fwrite(
   rfig2_ttest_results,
-  file = "Final Outputs/rfig2-ttest-results-raw.csv",
+  file = "Final Outputs/rtab2-ttest-results-raw.csv",
   bom = TRUE, quote = TRUE
 )
 
@@ -1714,7 +1714,7 @@ rfig2_ttest_results_full_html <- rfig2_ttest_results_full |>
 # Save as HTML
 gtsave(
   rfig2_ttest_results_full_html,
-  filename = "rfig2-ttest-results-full-html.html",
+  filename = "rtab2-ttest-results-full-html.html",
   path = "Final Outputs/"
 )
 
@@ -1756,7 +1756,7 @@ rfig2_ttest_results_abs_html <- rfig2_ttest_results_abs |>
 # Save as HTML
 gtsave(
   rfig2_ttest_results_abs_html,
-  filename = "rfig2-ttest-results-full-abs-html.html",
+  filename = "rtab2-ttest-results-full-abs-html.html",
   path = "Final Outputs/"
 )
 
@@ -2241,7 +2241,7 @@ Export table (csv and gt html)
 
 data.table::fwrite(
   rfig3_adjreg_results,
-  file = "Final Outputs/rfig3-adjreg-results-raw.csv",
+  file = "Final Outputs/rtab3-adjreg-results-raw.csv",
   bom = TRUE, quote = TRUE
 )
 
@@ -2454,7 +2454,7 @@ data_check_noblood0m_ids <- data_check_noblood0m[,.(patid)]
 
 fwrite(
   data_check_noblood0m_ids,
-  file = "Final Outputs/rfig4-dtchk-noblood0m-ids.csv",
+  file = "Final Outputs/rtab4-dtchk-noblood0m-ids.csv",
   bom = TRUE, quote = TRUE
 )
 
@@ -2495,10 +2495,10 @@ summary(data_wide$wt_kg_6m)
 
 ```
 
-Weight change complete case sample results
+Weight change and BMI complete case sample results
 ```{r}
 #------------------------------------------------------------------------------#
-# Restrict sample to complete case at 6 months
+# Restrict sample to complete case at 6 months (weight)
 
 data_wt_6m_cc <- data_wide[!is.na(wt_change_kg_06m)]
 length(unique(data_wt_6m_cc$patid))
@@ -2580,6 +2580,22 @@ sprintf(
   "On average, %.1f%% of total 6-month weight loss was achieved by 3 months.",
   mean(data_wt_3m6m_cc$prop_3m_of_6m, na.rm = TRUE) * 100
 )
+
+
+#------------------------------------------------------------------------------#
+# Restrict sample to complete case at 6 months (BMI)
+
+data_bmi_6m_cc <- data_wide[!is.na(bmi_0m) & !is.na(bmi_6m)]
+length(unique(data_bmi_6m_cc$patid))
+
+#-----------------------------#
+# Baseline and 6m weight
+
+summary(data_bmi_6m_cc$bmi_0m)
+print(sum_stats(data_bmi_6m_cc$bmi_0m))
+
+summary(data_bmi_6m_cc$bmi_6m)
+print(sum_stats(data_bmi_6m_cc$bmi_6m))
 
 ```
 
@@ -2789,6 +2805,12 @@ tab_bmi_trans_na_incl[
 
 tab_bmi_trans_na_incl
 
+fwrite(
+  tab_bmi_trans_na_incl,
+  file = "rtab4-tab-bmi-trans-na-incl.csv",
+  bom = TRUE, quote = TRUE
+)
+
 #-----------------------------#
 # NAs excluded (skipped counts of missing values)
 
@@ -2841,6 +2863,12 @@ tab_bmi_trans_na_excl[
 ]
 
 tab_bmi_trans_na_excl
+
+fwrite(
+  tab_bmi_trans_na_excl,
+  file = "rtab4-tab-bmi-trans-na-excl.csv",
+  bom = TRUE, quote = TRUE
+)
 
 ```
 
@@ -4074,6 +4102,7 @@ ggsave(
 ggsave(
   mfig2_wt_change, 
   filename = "Final Outputs/mfig2-wt-change.pdf",
+  device = cairo_pdf,
   width = 18, height = 14, dpi = 300
 )
 
@@ -4677,6 +4706,7 @@ ggsave(
 ggsave(
   mfig3_stratplot, 
   filename = "Final Outputs/mfig3-stratplot.pdf",
+  device = cairo_pdf,
   width = 18, height = 14, dpi = 300
 )
 
@@ -6434,6 +6464,7 @@ ggsave(
 ggsave(
   mfig4_combined,
   filename = "Final Outputs/mfig4-hba1c-lipids.pdf",
+  device = cairo_pdf,
   width = 18, height = 20, dpi = 300
 )
 
@@ -7120,6 +7151,7 @@ ggsave(
 ggsave(
   mfig5_dose_attr, 
   filename = "Final Outputs/mfig5-dose-attr.pdf",
+  device = cairo_pdf,
   width = 16, height = 12, dpi = 300
 )
 
@@ -7548,6 +7580,7 @@ ggsave(
 ggsave(
   sfig1_hm, 
   filename = "Final Outputs/sfig1-heatmap.pdf",
+  device = cairo_pdf,
   width = 18, height = 12, dpi = 300
 )
 
@@ -9313,6 +9346,7 @@ ggsave(
 ggsave(
   sfig4_sdeff_subgrp,
   filename = "Final Outputs/sfig4-sdeff-subgrp.pdf",
+  device = cairo_pdf,
   width = 16, height = 14, dpi = 300
 )
 
@@ -9329,7 +9363,14 @@ Data Prep
 #------------------------------------------------------------------------------#
 # Assign 6 month weight change vars (attrited vs completed patients)
 
+## The total count will be lower than the full study sample
+## Some participants who completed follow-up (no drug disc) have incomplete 6m weight data
+## This is a complete case analysis, hence the lower sample size
+
 data_attr_wt <- copy(data_wide)
+
+# Check for discontinued patients with no data_attr_wt (should be 0)
+data_attr_wt_chk <- data_attr_wt[attr_ever_yn == 1 & is.na(attr_wt)]
 
 # Treatment status factor
 data_attr_wt[
@@ -9616,6 +9657,7 @@ ggsave(
 ggsave(
   sfig5_wtloss_attr,
   filename = "Final Outputs/sfig5-wtloss-attr.pdf",
+  device = cairo_pdf,
   width = 12, height = 8, dpi = 300
 )
 
@@ -9879,6 +9921,7 @@ ggsave(
 ggsave(
   sfig6_dose_subgrp,
   filename = "Final Outputs/sfig6-dose-subgrp.pdf",
+  device = cairo_pdf,
   width = 18, height = 14, dpi = 300
 )
 
@@ -10200,6 +10243,7 @@ ggsave(
 ggsave(
   sfig7_sankey_diab_evol_full,
   filename = "Final Outputs/sfig7-sankey-diab-evol.pdf",
+  device = cairo_pdf,
   width = 8, height = 9, dpi = 300
 )
 
@@ -11507,6 +11551,6 @@ lfig5_cox_attr_imd_tab
 #------------------------------------------------------------------------------#
 # Export table
 
-gtsave(lfig5_cox_attr_imd_tab, "Final Outputs/lfig5_cox_attr_imd_tab.html")
+gtsave(lfig5_cox_attr_imd_tab, "Final Outputs/lfig5-cox-attr-imd-tab.html")
 
 ```
