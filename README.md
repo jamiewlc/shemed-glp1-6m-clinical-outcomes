@@ -11,11 +11,10 @@ The R Markdown file reproduces all statistical analyses, figures, and tables pre
 
 ## Data Availability
 
-The underlying de-identified individual participant data and data dictionary are not publicly available due to participant confidentiality and contractual restrictions.
-
-Data may be made available to qualified researchers upon reasonable request, subject to institutional data-sharing agreements and applicable regulatory requirements.
+The underlying de-identified individual participant data and a data dictionary will be made available to qualified researchers upon reasonable request, subject to institutional data-sharing agreements and applicable regulatory requirements. 
 
 The code assumes access to the original study dataset structured according to the internal project schema.
+
 
 ## Software and Computational Environment
 
