@@ -1,5 +1,7 @@
 # Digital-first delivery of GLP-1 receptor agonist therapy in a large real-world cohort of women
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18821943.svg)](https://doi.org/10.5281/zenodo.18821943)
+
 Code implementing analyses from the paper: 
 > Deanfield J, Wong JLC, Katsoulis M, Deanfield E, Freemantle N, Thakkar R, Patel R, Joy R, Noble M, Ryan DH. Digital-first delivery of GLP-1 receptor agonist therapy in a large real-world cohort of women. (Manuscript under review).
 
