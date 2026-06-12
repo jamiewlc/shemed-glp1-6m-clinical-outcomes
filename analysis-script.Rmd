@@ -18,16 +18,16 @@ RTab1. Outlier threshold table
 RTab2. Crude paired t-test results for 6 month change in all outcomes
 RTab3. Marginal adjusted mean 6 month change in all outcomes
 RTab4. Misc estimates for write-up
-RTab5. Characeristics Tables for Patients with Missing Data
+RTab5. Characeristics Tables for Patients with Missing Data (8127 Sample)
+RTab6. Characeristics Tables for Included vs Excluded Patients (16022 Sample)
+RTab7. IP Weighted Sensitivity Analysis (Missing Data Adjustment)
 
 Main Paper Outputs:
 MFig1. CONSORT style diagram
 MTab1. Patient characteristics table (by weight)
 MFig2. Weight change trajectory and waterfall plots (main)
 MFig3. Weight change trajectory plots (subgroup stratified)
-MFig4a. HbA1c change figure (diabetic evolution)
-MFig4b. Biochemistry lipid change waterfall plots
-MFig4c. HbA1c and Lipids Combined
+MFig4. HbA1c and Lipids + Diabetic Evolution Combined Waterfall and Box & Whisker plots
 MFig5. Dosing schedule (mounjaro only) with side effect and attrition counts
 
 Supplement Outputs:
@@ -87,7 +87,9 @@ pacman::p_load(
   # For LMM
   lme4, lmerTest, splines, emmeans,
   # For KM plots
-  survival, survminer
+  survival, survminer,
+  # For weighted tests
+  survey
 )
 
 # Set working directory
@@ -95,7 +97,10 @@ knitr::opts_knit$set(root.dir = here())   # set as default github wd
 here()                                    # checks that the wd has been set
 
 # Read in cleaned datasets
+## Main analysis dataset
 data_raw <- fread("data_clean.csv")
+## Supplementary signup dataset with full sample
+data_signup <- fread("data_signup.csv")
 
 # Restrict to first 6 months of follow-up (weeks 0-26)
 data <- data_raw[glp1_idx >= 0 & glp1_idx <= 26]
@@ -275,7 +280,13 @@ Custom function for p-value extraction
 ```{r}
 # Custom function to format p-value for plot
 format_pval <- function(p, digits = 3, prefix = "P") {
-  stopifnot(length(p) == 1, is.numeric(p), !is.na(p))
+  
+  # Allow missing p-values
+  if (length(p) == 0 || is.na(p)) {
+    return(NA_character_)
+  }
+  
+  stopifnot(length(p) == 1, is.numeric(p))
   
   if (p < 10^(-digits)) {
     paste0(prefix, " < ", formatC(10^(-digits), format = "f", digits = digits))
@@ -752,14 +763,15 @@ hist(data$age)
 summary(data$age)
 
 data[, age_cat5 := fcase(
-  age >= 18 & age <= 29, "18–29",
-  age >= 30 & age <= 39, "30–39",
-  age >= 40 & age <= 49, "40–49",
-  age >= 50 & age <= 59, "50–59",
-  age >= 60 & age <= 79, "60–79",
+  age >= 18 & age <= 29, "18 to <30",
+  age >= 30 & age <= 39, "30 to <40",
+  age >= 40 & age <= 49, "40 to <50",
+  age >= 50 & age <= 59, "50 to <60",
+  age >= 60 & age <= 79, "60 to <80",
   default = NA_character_
 )]
-data[, age_cat5 := factor(age_cat5, levels = c("18–29","30–39","40–49","50–59","60–79"))]
+data[, age_cat5 := factor(age_cat5, 
+                          levels = c("18 to <30","30 to <40","40 to <50","50 to <60","60 to <80"))]
 
 #-----------------------------#
 # Ethnicity (Binary | 1 = White, 0 = Non-White)
@@ -784,17 +796,17 @@ data$area_imd_qt <-
 # Baseline weight (Named 5 level categorical)
 
 # Cut with left closed, right open categories
-## <90 kg     = −∞ to <90
-## 90–99 kg   = ≥90 to <100
-## 100–109 kg = ≥100 to <110
-## 110–119 kg = ≥110 to <120
-## ≥120 kg    = ≥120 to ∞
+## <90 kg         = −∞ to <90
+## 90 to <100 kg  = ≥90 to <100
+## 100 to <110 kg = ≥100 to <110
+## 110 to <120 kg = ≥110 to <120
+## ≥120 kg        = ≥120 to ∞
 
 data$wt_kg_0m_cat <- cut(
   data$wt_kg_0m,
   breaks = c(-Inf, 90, 100, 110, 120, Inf), right = FALSE,
   labels = c(
-    "<90 kg", "90–99 kg", "100–109 kg", "110–119 kg", "≥120 kg")
+    "<90 kg", "90 to <100 kg", "100 to <110 kg", "110 to <120 kg", "≥120 kg")
 )
 
 
@@ -1054,7 +1066,7 @@ data_wide$wt_kg_0m_cat <- cut(
   data_wide$wt_kg_0m,
   breaks = c(-Inf, 90, 100, 110, 120, Inf), right = FALSE,
   labels = c(
-    "<90 kg", "90–99 kg", "100–109 kg", "110–119 kg", "≥120 kg")
+    "<90 kg", "90 to <100 kg", "100 to <110 kg", "110 to <120 kg", "≥120 kg")
 )
 
 # BMI (baseline)
@@ -1066,10 +1078,10 @@ data_wide$bmi_0m_cat <- cut(
     25, 30, 35, 40, Inf),
   right  = FALSE,
   labels = c(
-    #"Healthy (18.5–24.9)", *None present*
-    "Overweight (25.0–29.9)",
-    "Obesity I (30.0–34.9)",
-    "Obesity II (35.0–39.9)",
+    #"Healthy (18.5 to <25.0)", *None present*
+    "Overweight (25.0 to <30.0)",
+    "Obesity I (30.0 to <35.0)",
+    "Obesity II (35.0 to <40.0)",
     "Obesity III (≥40.0)"
   )
 )
@@ -1083,10 +1095,10 @@ data_wide$bmi_6m_cat <- cut(
     25, 30, 35, 40, Inf),
   right  = FALSE,
   labels = c(
-    "Healthy (18.5–24.9)",
-    "Overweight (25.0–29.9)",
-    "Obesity I (30.0–34.9)",
-    "Obesity II (35.0–39.9)",
+    "Healthy (18.5 to <25.0)",
+    "Overweight (25.0 to <30.0)",
+    "Obesity I (30.0 to <35.0)",
+    "Obesity II (35.0 to <40.0)",
     "Obesity III (≥40.0)"
   )
 )
@@ -1099,13 +1111,13 @@ data_wide[, hba1c_cat_0m_lab :=
       "Diabetes (≥48 mmol/mol)",
       default = NA_character_,
       hba1c_cat_0m == "Pre-Diabetic",
-      "Pre-Diabetes (42–47 mmol/mol)",
+      "Pre-Diabetes (42 to <48 mmol/mol)",
       hba1c_cat_0m == "Normal",
       "Normal (<42 mmol/mol)"
     ),
     levels = c(
       "Diabetes (≥48 mmol/mol)",
-      "Pre-Diabetes (42–47 mmol/mol)",
+      "Pre-Diabetes (42 to <48 mmol/mol)",
       "Normal (<42 mmol/mol)"
     )
   )
@@ -1233,40 +1245,53 @@ paired_change_table <- function(dt,
   compute_rows <- function(x, subgroup_level = "Full Sample") {
     base <- x[[base_var]]
     fu   <- x[[fu_var]]
-
+  
     # Absolute change
     ch_abs <- fu - base
-    test_abs <- stats::t.test(fu, base, paired = TRUE)
-
+    n_abs  <- sum(!is.na(ch_abs))
+  
     # Percent change
     den <- if (pct_denominator == "baseline") base else fu
     ch_pct <- ifelse(is.finite(den) & den != 0, (fu - base) / den * 100, NA_real_)
-    test_pct <- stats::t.test(ch_pct, mu = 0)
-
+    n_pct  <- sum(!is.na(ch_pct))
+  
+    # Run tests only where enough observations exist (i.e. 2 for a paired test)
+    test_abs <- if (n_abs >= 2L) {
+      stats::t.test(fu, base, paired = TRUE)
+    } else {
+      NULL
+    }
+  
+    test_pct <- if (n_pct >= 2L) {
+      stats::t.test(ch_pct, mu = 0)
+    } else {
+      NULL
+    }
+  
     out_abs <- data.table::data.table(
       measure = measure_label %||% base_var,
       subgroup = subgroup_level,
       scale = "Absolute Change",
-      n = length(ch_abs),
-      pct_total = 100 * length(ch_abs) / N_total,
-      mean_change = mean(ch_abs, na.rm = TRUE),
-      ci_low  = unname(test_abs$conf.int[1]),
-      ci_high = unname(test_abs$conf.int[2]),
-      p_value = unname(test_abs$p.value)
+      n = n_abs,
+      pct_total = 100 * n_abs / N_total,
+      mean_change = if (n_abs > 0L) mean(ch_abs, na.rm = TRUE) else NA_real_,
+      ci_low  = if (is.null(test_abs)) NA_real_ else unname(test_abs$conf.int[1]),
+      ci_high = if (is.null(test_abs)) NA_real_ else unname(test_abs$conf.int[2]),
+      p_value = if (is.null(test_abs)) NA_real_ else unname(test_abs$p.value)
     )
-
+  
     out_pct <- data.table::data.table(
       measure = measure_label %||% base_var,
       subgroup = subgroup_level,
       scale = "Percent Change",
-      n = sum(!is.na(ch_pct)),
-      pct_total = 100 * sum(!is.na(ch_pct)) / N_total,
-      mean_change = mean(ch_pct, na.rm = TRUE),
-      ci_low  = unname(test_pct$conf.int[1]),
-      ci_high = unname(test_pct$conf.int[2]),
-      p_value = unname(test_pct$p.value)
+      n = n_pct,
+      pct_total = 100 * n_pct / N_total,
+      mean_change = if (n_pct > 0L) mean(ch_pct, na.rm = TRUE) else NA_real_,
+      ci_low  = if (is.null(test_pct)) NA_real_ else unname(test_pct$conf.int[1]),
+      ci_high = if (is.null(test_pct)) NA_real_ else unname(test_pct$conf.int[2]),
+      p_value = if (is.null(test_pct)) NA_real_ else unname(test_pct$p.value)
     )
-
+  
     data.table::rbindlist(list(out_abs, out_pct), use.names = TRUE, fill = TRUE)
   }
 
@@ -1437,7 +1462,7 @@ rfig2_ttest_results[
 
 rfig2_ttest_results[
   grepl("pre", subgroup, ignore.case = TRUE),
-  subgroup := "Baseline Pre-diabetic (42–47 mmol/mol)"
+  subgroup := "Baseline Pre-diabetic (42 to <48 mmol/mol)"
 ]
 
 rfig2_ttest_results[
@@ -1462,7 +1487,7 @@ rfig2_ttest_results[
 hba1c_levels <- c(
   "Full Sample",
   "Basline Diabetic (≥48 mmol/mol)",
-  "Baseline Pre-diabetic (42–47 mmol/mol)",
+  "Baseline Pre-diabetic (42 to <48 mmol/mol)",
   "Baseline Normal (<42 mmol/mol)",
   "Baseline Missing"
 )
@@ -1470,7 +1495,7 @@ hba1c_levels <- c(
 # Baseline weight subgroup order (ONLY for Weight rows)
 wt_levels <- c(
   "Full Sample",
-  "<90 kg", "90–99 kg", "100–109 kg", "110–119 kg", "≥120 kg",
+  "<90 kg", "90 to <100 kg", "100 to <110 kg", "110 to <120 kg", "≥120 kg",
   "Baseline Missing"
 )
 
@@ -2119,7 +2144,7 @@ rfig3_adjreg_results[
 
 rfig3_adjreg_results[
   grepl("pre", subgroup, ignore.case = TRUE),
-  subgroup := "Baseline Pre-diabetic (42–47 mmol/mol)"
+  subgroup := "Baseline Pre-diabetic (42 to <48 mmol/mol)"
 ]
 
 rfig3_adjreg_results[
@@ -2144,7 +2169,7 @@ rfig3_adjreg_results[
 hba1c_levels <- c(
   "Full Sample",
   "Basline Diabetic (≥48 mmol/mol)",
-  "Baseline Pre-diabetic (42–47 mmol/mol)",
+  "Baseline Pre-diabetic (42 to <48 mmol/mol)",
   "Baseline Normal (<42 mmol/mol)",
   "Baseline Missing"
 )
@@ -2152,7 +2177,7 @@ hba1c_levels <- c(
 # Baseline weight subgroup order (ONLY for Weight rows)
 wt_levels <- c(
   "Full Sample",
-  "<90 kg", "90–99 kg", "100–109 kg", "110–119 kg", "≥120 kg",
+  "<90 kg", "90 to <100 kg", "100 to <110 kg", "110 to <120 kg", "≥120 kg",
   "Baseline Missing"
 )
 
@@ -2442,13 +2467,6 @@ Patient checks
 data_check_noblood0m <- data_wide[blood_test_any_0m == 0]
 head(data_check_noblood0m)
 
-# Examples
-
-#View(data[patid == "007b61f0-5f9d-4671-8d3d-765ddeb8b6e5"])
-# No recording (entered on 28 Nov, reported blood 6 Dec)
-# Initiated GLP1 2024-12-10
-#View(data_raw[patid == "007b61f0-5f9d-4671-8d3d-765ddeb8b6e5"])
-
 # Export as table
 data_check_noblood0m_ids <- data_check_noblood0m[,.(patid)]
 
@@ -2468,21 +2486,6 @@ length(unique(data_check_noblood6m$patid))
 
 # Proportion who completed follow-up
 100 - length(unique(data_check_noblood6m$patid))/length(unique(data_wide$patid)) * 100
-
-# Examples
-
-#View(data[patid == "0006e076-86c9-4047-927c-6aa77baf2446"])
-# 19th May, so too early (check raw data)
-#View(data_raw[patid == "0006e076-86c9-4047-927c-6aa77baf2446"])
-# Yes had blood test but at week 16
-
-#View(data[patid == "00cbcdbd-9c9e-4383-9bac-e2f34ec4905a"])
-# Actually didn't have second test
-
-#-----------------------------#
-# Example of the patient with one blood test result and not others
-#View(data[patid == "0003c564-91f5-416a-93e5-5f551366127d"])
-#(have tests done but measures removed)
 
 #-----------------------------#
 # Total count of blood tests at 0m x 6m
@@ -2589,7 +2592,7 @@ data_bmi_6m_cc <- data_wide[!is.na(bmi_0m) & !is.na(bmi_6m)]
 length(unique(data_bmi_6m_cc$patid))
 
 #-----------------------------#
-# Baseline and 6m weight
+# Baseline and 6m BMI
 
 summary(data_bmi_6m_cc$bmi_0m)
 print(sum_stats(data_bmi_6m_cc$bmi_0m))
@@ -2757,10 +2760,10 @@ BMI category transition tables
 # exist in bmi_6m_cat (6m). We therefore include it in the expected column order
 # so the cast table always has a consistent set of columns.
 cat_order <- c(
-  "Healthy (18.5–24.9)",
-  "Overweight (25.0–29.9)",
-  "Obesity I (30.0–34.9)",
-  "Obesity II (35.0–39.9)",
+  "Healthy (18.5 to <25.0)",
+  "Overweight (25.0 to <30.0)",
+  "Obesity I (30.0 to <35.0)",
+  "Obesity II (35.0 to <40.0)",
   "Obesity III (≥40.0)",
   "Missing"
 )
@@ -2807,7 +2810,7 @@ tab_bmi_trans_na_incl
 
 fwrite(
   tab_bmi_trans_na_incl,
-  file = "rtab4-tab-bmi-trans-na-incl.csv",
+  file = "Final Outputs/rtab4-tab-bmi-trans-na-incl.csv",
   bom = TRUE, quote = TRUE
 )
 
@@ -2816,10 +2819,10 @@ fwrite(
 
 # Redefine order with missing label removed
 cat_order_cc <- c(
-  "Healthy (18.5–24.9)",
-  "Overweight (25.0–29.9)",
-  "Obesity I (30.0–34.9)",
-  "Obesity II (35.0–39.9)",
+  "Healthy (18.5 to <25.0)",
+  "Overweight (25.0 to <30.0)",
+  "Obesity I (30.0 to <35.0)",
+  "Obesity II (35.0 to <40.0)",
   "Obesity III (≥40.0)"
 )
 
@@ -2866,7 +2869,7 @@ tab_bmi_trans_na_excl
 
 fwrite(
   tab_bmi_trans_na_excl,
-  file = "rtab4-tab-bmi-trans-na-excl.csv",
+  file = "Final Outputs/rtab4-tab-bmi-trans-na-excl.csv",
   bom = TRUE, quote = TRUE
 )
 
@@ -2874,26 +2877,171 @@ fwrite(
 
 
 ################################################################################ 
-# RTab5. Characeristics Tables for Patients with Missing Data
+# RTab5. Characeristics Tables for Patients with Missing Data (8127 Sample)
 ################################################################################ 
 
+Patient characteristics table for individuals with missing values in any paired outcome
+- i.e. any missing vs no missing across all paired outcome vars
+- Note that here we are comparing excluded vs included sample in the same table
+  (Other tables do not and just restrict table 1 to missingness)
+(Appear similar to full sample)
+```{r}
+#------------------------------------------------------------------------------#
+# Create baseline characteristics table
+
+#-----------------------------#
+# Create flag for any missingness in paired variables
+
+# Copy full dataset
+data_missing_pairchange <- copy(data_wide)
+
+# Create missingness flag
+data_missing_pairchange[, missing_pairchange := fifelse(
+   
+    # Weight
+    is.na(wt_change_kg_06m) |
+    
+    # Total Cholesterol
+    is.na(blood_chol_mmoll_0m) | 
+    is.na(blood_chol_mmoll_6m) |
+    
+    # HDL
+    is.na(blood_hdl_mmoll_0m) | 
+    is.na(blood_hdl_mmoll_6m) |  
+    
+    # LDL
+    is.na(blood_ldl_mmoll_0m) | 
+    is.na(blood_ldl_mmoll_6m) |  
+    
+    # Triglycerides
+    is.na(blood_tg_mmoll_0m) | 
+    is.na(blood_tg_mmoll_6m) |   
+    
+    # HbA1c
+    is.na(blood_hba1c_mmolmol_0m) | 
+    is.na(blood_hba1c_mmolmol_6m),
+  
+  1L, 0L
+)]
+
+# Add labels for tables
+data_missing_pairchange[, missing_pairchange := factor(
+  missing_pairchange,
+  levels = c(0, 1),
+  labels = c("No Missingness", "Any Missingness")
+)]
+
+# Tabulate
+table(data_missing_pairchange$missing_pairchange, useNA = "always")
+
+#-----------------------------#
+# Assign baseline weight (categorical) as strata
+
+strata <- c(
+  list(Total = data_missing_pairchange),
+  split(data_missing_pairchange, data_missing_pairchange$missing_pairchange, drop = TRUE)
+)
+
+#-----------------------------#
+# Assign labels to variables
+
+labels <- list(
+  variables = list(
+    # Sex
+    sex                     = "Sex",
+    
+    # Age
+    age_cat5                = "Age",
+
+    # Physical Measures (skip weight)
+    wt_kg_0m_cat            = "Weight (kg)",
+    bmi_0m_cat              = "BMI (kg/m\u00B2)",
+    
+    # Lipids
+    blood_chol_mmoll_0m      = "Total Cholesterol (mmol/L)",
+    blood_hdl_mmoll_0m       = "HDL Cholesterol (mmol/L)",
+    blood_ldl_mmoll_0m       = "LDL Cholesterol (mmol/L)",
+    blood_tg_mmoll_0m        = "Triglycerides (mmol/L)",
+
+    # Glycemic Measure
+    blood_hba1c_mmolmol_0m   = "HbA1c (mmol/mol)",
+    
+    # Sociodemographics
+    eth_bin                 = "Ethnicity",
+    area_imd_qt             = "Index of Multiple Deprivation (Quintile)"
+  ),
+
+  # Column group header
+  groups = list("", "Sample")
+)
+
+groupspan <- c(1, length(strata) - 1)
+
+#-----------------------------#
+# Create table of baseline characteristics
+
+rtab5a_desctab_missing_pairchange <- table1(
+  x           = strata,
+  labels      = labels,
+  groupspan   = groupspan,
+  # Override median to show IQR instead of Min/Max
+  render.continuous = c(
+    "Mean (SD)"        = "mean (sd)",
+    "Median (IQR)"     = "q50 (q25, q75)",
+    "Range [Min, Max]" = "min, max"
+  )
+  #footnote    = footnote,
+  #render.continuous  = my.render.cont,
+  #render.categorical = my.render.cat
+)
+
+rtab5a_desctab_missing_pairchange
+
+
+#------------------------------------------------------------------------------#
+# Export table
+## Easiest way is the export through RStudio viewer (save as webpage)
+
+
+```
+
 Patient characteristics table for individuals with missing weight change
-(Appear similar to full sample)
+- i.e. no weight at 6m for comparison
 ```{r}
 #------------------------------------------------------------------------------#
 # Create baseline characteristics table
 
 #-----------------------------#
-# Restrict to patients iwth missing weight change
+# Create flag for any missingness in paired variables
 
-data_missing_wtchange <- data_wide[is.na(wt_change_kg_06m)]
+# Copy full dataset
+data_missing_pairwt <- copy(data_wide)
+
+# Create missingness flag
+data_missing_pairwt[, missing_pairwt := fifelse(
+   
+    # Weight
+    is.na(wt_change_kg_06m),
+    
+  1L, 0L
+)]
+
+# Add labels for tables
+data_missing_pairwt[, missing_pairwt := factor(
+  missing_pairwt,
+  levels = c(0, 1),
+  labels = c("No Missingness", "Missing Paired Weight")
+)]
+
+# Tabulate
+table(data_missing_pairwt$missing_pairwt, useNA = "always")
 
 #-----------------------------#
 # Assign baseline weight (categorical) as strata
 
 strata <- c(
-  list(Total = data_missing_wtchange),
-  split(data_missing_wtchange, data_missing_wtchange$wt_kg_0m_cat, drop = TRUE)
+  list(Total = data_missing_pairwt),
+  split(data_missing_pairwt, data_missing_pairwt$missing_pairwt, drop = TRUE)
 )
 
 #-----------------------------#
@@ -2908,8 +3056,9 @@ labels <- list(
     age_cat5                = "Age",
 
     # Physical Measures (skip weight)
+    wt_kg_0m_cat            = "Weight (kg)",
     bmi_0m_cat              = "BMI (kg/m\u00B2)",
-
+    
     # Lipids
     blood_chol_mmoll_0m      = "Total Cholesterol (mmol/L)",
     blood_hdl_mmoll_0m       = "HDL Cholesterol (mmol/L)",
@@ -2924,8 +3073,8 @@ labels <- list(
     area_imd_qt             = "Index of Multiple Deprivation (Quintile)"
   ),
 
-  # Column group header (matches the blog example layout)
-  groups = list("", "Baseline Weight")
+  # Column group header
+  groups = list("", "Sample")
 )
 
 groupspan <- c(1, length(strata) - 1)
@@ -2933,7 +3082,7 @@ groupspan <- c(1, length(strata) - 1)
 #-----------------------------#
 # Create table of baseline characteristics
 
-rtab5_desctab_missing_wtchange <- table1(
+rtab5b_desctab_missing_pairwt <- table1(
   x           = strata,
   labels      = labels,
   groupspan   = groupspan,
@@ -2948,34 +3097,69 @@ rtab5_desctab_missing_wtchange <- table1(
   #render.categorical = my.render.cat
 )
 
-rtab5_desctab_missing_wtchange
+rtab5b_desctab_missing_pairwt
 
 
 #------------------------------------------------------------------------------#
 # Export table
 ## Easiest way is the export through RStudio viewer (save as webpage)
 
-
 ```
 
-Patient characteristics table for individuals with missing hba1c change
-(Appear similar to full sample)
+Patient characteristics table for individuals with missing paired blood measurements
+- i.e. no value at baseline and/or no value at 6m for comparison across ANY measure
 ```{r}
 #------------------------------------------------------------------------------#
 # Create baseline characteristics table
 
 #-----------------------------#
-# Restrict to patients iwth missing weight change
+# Create flag for any missingness in paired variables
 
-data_missing_hba1cchange <- data_wide[is.na(blood_hba1c_mmolmol_0m) | 
-                                     is.na(blood_hba1c_mmolmol_6m)]
+# Copy full dataset
+data_missing_pairblood <- copy(data_wide)
+
+# Create missingness flag
+data_missing_pairblood[, missing_pairblood := fifelse(
+    
+    # Total Cholesterol
+    is.na(blood_chol_mmoll_0m) | 
+    is.na(blood_chol_mmoll_6m) |
+    
+    # HDL
+    is.na(blood_hdl_mmoll_0m) | 
+    is.na(blood_hdl_mmoll_6m) |  
+    
+    # LDL
+    is.na(blood_ldl_mmoll_0m) | 
+    is.na(blood_ldl_mmoll_6m) |  
+    
+    # Triglycerides
+    is.na(blood_tg_mmoll_0m) | 
+    is.na(blood_tg_mmoll_6m) |   
+    
+    # HbA1c
+    is.na(blood_hba1c_mmolmol_0m) | 
+    is.na(blood_hba1c_mmolmol_6m),
+  
+  1L, 0L
+)]
+
+# Add labels for tables
+data_missing_pairblood[, missing_pairblood := factor(
+  missing_pairblood,
+  levels = c(0, 1),
+  labels = c("No Missingness", "Any Missingness in Blood Test Measures")
+)]
+
+# Tabulate
+table(data_missing_pairblood$missing_pairblood, useNA = "always")
 
 #-----------------------------#
 # Assign baseline weight (categorical) as strata
 
 strata <- c(
-  list(Total = data_missing_hba1cchange),
-  split(data_missing_hba1cchange, data_missing_hba1cchange$wt_kg_0m_cat, drop = TRUE)
+  list(Total = data_missing_pairblood),
+  split(data_missing_pairblood, data_missing_pairblood$missing_pairblood, drop = TRUE)
 )
 
 #-----------------------------#
@@ -2990,8 +3174,9 @@ labels <- list(
     age_cat5                = "Age",
 
     # Physical Measures (skip weight)
+    wt_kg_0m_cat            = "Weight (kg)",
     bmi_0m_cat              = "BMI (kg/m\u00B2)",
-
+    
     # Lipids
     blood_chol_mmoll_0m      = "Total Cholesterol (mmol/L)",
     blood_hdl_mmoll_0m       = "HDL Cholesterol (mmol/L)",
@@ -3006,8 +3191,8 @@ labels <- list(
     area_imd_qt             = "Index of Multiple Deprivation (Quintile)"
   ),
 
-  # Column group header (matches the blog example layout)
-  groups = list("", "Baseline Weight")
+  # Column group header
+  groups = list("", "Sample")
 )
 
 groupspan <- c(1, length(strata) - 1)
@@ -3015,7 +3200,7 @@ groupspan <- c(1, length(strata) - 1)
 #-----------------------------#
 # Create table of baseline characteristics
 
-rtab5_desctab_missing_hba1cchange <- table1(
+rtab5c_desctab_missing_pairblood <- table1(
   x           = strata,
   labels      = labels,
   groupspan   = groupspan,
@@ -3030,35 +3215,93 @@ rtab5_desctab_missing_hba1cchange <- table1(
   #render.categorical = my.render.cat
 )
 
-rtab5_desctab_missing_hba1cchange
+rtab5c_desctab_missing_pairblood
 
 
 #------------------------------------------------------------------------------#
 # Export table
 ## Easiest way is the export through RStudio viewer (save as webpage)
 
-
 ```
 
-Patient characteristics table for individuals with missing total cholesterol change
-(Appear similar to full sample)
+
+
+################################################################################ 
+# RTab6. Characeristics Tables for Included vs Excluded Patients (16022 Sample)
+################################################################################ 
+
+Note that measures here were taken at the time of online registration.
+Measures in the main table 1 were taken from right before initiation of treatment,
+hence the distribution may look slightly different for measures like BMI.
+
 ```{r}
+#------------------------------------------------------------------------------#
+# Data prep
+
+# Create flag of whether participant is in 8127 sample
+data_signup[, sample_8127 := fifelse(
+  patid %in% data_wide$patid,
+  "Included",
+  "Not Included"
+)]
+
+# Change area_imd_qt to categorical
+summary(data_signup$area_imd_qt)
+data_signup[, area_imd_qt := factor(
+  area_imd_qt,
+  levels = c(
+    "1", "2", "3", "4", "5"
+  ),
+  labels = c(
+    "1 (Most Deprived)",
+    "2", "3", "4",
+    "5 (Least Deprived)")
+)]
+
+table(data_signup$area_imd_qt, useNA = "always")
+
+# Create categorical BMI var
+summary(data_signup$bmi_bl_clean)
+data_signup$bmi_bl_cat <- cut(
+  data_signup$bmi_bl_clean,
+  breaks = c(
+    18.5, 
+    25, 30, 35, 40, Inf),
+  right  = FALSE,
+  labels = c(
+    "Healthy (18.5 to <25.0)",
+    "Overweight (25.0 to <30.0)",
+    "Obesity I (30.0 to <35.0)",
+    "Obesity II (35.0 to <40.0)",
+    "Obesity III (≥40.0)"
+  )
+)
+
+table(data_signup$bmi_bl_cat, useNA = "always")
+
+# Assign all to female
+data_signup[, sex := "Female"]
+
+
 #------------------------------------------------------------------------------#
 # Create baseline characteristics table
 
 #-----------------------------#
-# Restrict to patients iwth missing weight change
-
-data_missing_cholchange <- data_wide[is.na(blood_chol_mmoll_0m) | 
-                                     is.na(blood_chol_mmoll_6m)]
-
-#-----------------------------#
-# Assign baseline weight (categorical) as strata
+# Assign sample as strata
 
 strata <- c(
-  list(Total = data_missing_cholchange),
-  split(data_missing_cholchange, data_missing_cholchange$wt_kg_0m_cat, drop = TRUE)
+  list(Total = data_signup),
+  split(data_signup, data_signup$sample_8127, drop = TRUE)
 )
+
+#-----------------------------#
+# Final checks
+
+patids_included_bmi_under25 <- data_signup[
+  sample_8127 == "Included" & bmi_bl < 25,
+  patid
+]
+patids_included_bmi_under25
 
 #-----------------------------#
 # Assign labels to variables
@@ -3066,30 +3309,20 @@ strata <- c(
 labels <- list(
   variables = list(
     # Sex
-    sex                     = "Sex",
+    sex           = "Sex",
     
     # Age
-    age_cat5                = "Age",
+    age           = "Age",
 
-    # Physical Measures (skip weight)
-    bmi_0m_cat              = "BMI (kg/m\u00B2)",
+    # Physical Measures
+    bmi_bl_cat        = "BMI (kg/m\u00B2)",
 
-    # Lipids
-    blood_chol_mmoll_0m      = "Total Cholesterol (mmol/L)",
-    blood_hdl_mmoll_0m       = "HDL Cholesterol (mmol/L)",
-    blood_ldl_mmoll_0m       = "LDL Cholesterol (mmol/L)",
-    blood_tg_mmoll_0m        = "Triglycerides (mmol/L)",
-
-    # Glycemic Measure
-    blood_hba1c_mmolmol_0m   = "HbA1c (mmol/mol)",
-    
     # Sociodemographics
-    eth_bin                 = "Ethnicity",
-    area_imd_qt             = "Index of Multiple Deprivation (Quintile)"
+    area_imd_qt   = "Index of Multiple Deprivation (Quintile)"
   ),
 
-  # Column group header (matches the blog example layout)
-  groups = list("", "Baseline Weight")
+  # Column group header
+  groups = list("", "Sample")
 )
 
 groupspan <- c(1, length(strata) - 1)
@@ -3097,7 +3330,7 @@ groupspan <- c(1, length(strata) - 1)
 #-----------------------------#
 # Create table of baseline characteristics
 
-rtab5_desctab_missing_cholchange <- table1(
+rtab6_descstat_sample <- table1(
   x           = strata,
   labels      = labels,
   groupspan   = groupspan,
@@ -3112,16 +3345,1257 @@ rtab5_desctab_missing_cholchange <- table1(
   #render.categorical = my.render.cat
 )
 
-rtab5_desctab_missing_cholchange
+rtab6_descstat_sample
 
 
 #------------------------------------------------------------------------------#
 # Export table
 ## Easiest way is the export through RStudio viewer (save as webpage)
+## Then print as PDF through a browswer or Adobe Acrobat
 
 
 ```
 
+
+
+################################################################################ 
+# RTab7. IP Weighted Sensitivity Analysis (Missing Data Adjustment)
+################################################################################ 
+
+Purpose:
+- Complete-case paired outcome analyses are repeated using inverse probability
+  of observation weights.
+- This is intended as a missing-data sensitivity analysis for the main paired
+  weight and blood-test outcome estimates.
+- The IP weighted analyses reweight participants with complete paired outcome
+  data to represent the full analytical cohort, or the relevant subgroup for
+  subgroup-specific analyses.
+- A missing-indicator approach was used because missingness was low within the majority 
+  of baseline sociodemographic predictors, so any potential bias from residual differences 
+  in observed covariates should be minimal.
+
+Notes:
+- Weight outcomes are primary outcomes and are not FDR adjusted.
+- FDR adjustment is applied separately across:
+  (1) the 6 main blood-test outcome rows   
+  (2) the 3 baseline HbA1c category-specific rows
+- All other figures remain descriptive complete-case plots of observed data
+
+Readability note:
+- The code is organised into two main parts: first, helper functions that estimate
+  one outcome row at a time; second, table-building code that calls the helper
+  repeatedly for the weight, blood-test, and HbA1c subgroup rows.
+- The central helper is `estimate_ipw_paired_change_row()`. For each outcome,
+  it defines the target population, identifies participants with an observed
+  complete baseline-follow-up pair, estimates stabilised observation weights,
+  and returns one complete-case and one IPW-adjusted row.
+- The target population is the full analytical cohort passed to the function,
+  or the subgroup-specific population after applying `subgroup_filter`.
+- Only participants with complete paired outcome data contribute to the weighted
+  mean change estimate. The weights make those observed complete pairs represent
+  the target population under the missing-at-random assumption conditional on
+  included baseline covariates.
+
+a) Create helper functions
+```{r}
+#------------------------------------------------------------------------------#
+# IP weighted sensitivity analysis table for missing baseline or follow-up data
+
+
+#------------------------------------------------------------------------------#
+# Helper function: format p-values
+#
+# Converts numeric p-values into manuscript/table-friendly strings.
+# For example, 0.0004 becomes "<0.001" when digits = 3, while 0.0241 becomes
+# "0.024". Missing p-values remain missing.
+
+format_p_value_rtab7 <- function(p, digits = 3) {
+  ifelse(
+    is.na(p), NA_character_,
+    ifelse(
+      p < 10^(-digits),
+      paste0("<", formatC(10^(-digits), format = "f", digits = digits)),
+      formatC(p, format = "f", digits = digits)
+    )
+  )
+}
+
+
+#------------------------------------------------------------------------------#
+# Helper function: choose available baseline predictors for the missingness model
+#
+# This lets the same IPW function be used across outcomes even if one of the
+# proposed baseline predictors is absent from a particular dataset/version.
+
+keep_available_ipw_predictors <- function(analysis_data, candidate_vars) {
+  candidate_vars[candidate_vars %chin% names(analysis_data)]
+}
+
+
+#------------------------------------------------------------------------------#
+# Helper function: safely backtick variable names for formulas
+#
+# Backticks protect variable names that include special characters, spaces, or
+# other syntax-sensitive text when they are pasted into an R formula.
+
+backtick_for_formula <- function(x) {
+  paste0("`", x, "`")
+}
+
+
+#------------------------------------------------------------------------------#
+# Helper function: prepare IPW model covariates using missing-as-category method
+
+# All variables are treated as categorical in the IPW observation model,
+# to ensure that missingness can be treated as a separate category.
+
+# Categorical variables:
+# - Missing values are coded as an explicit "Missing" category.
+
+# Numeric variables:
+# - Values are converted into quantile-based categories (here quintiles are used).
+# - Missing values are coded as an explicit "Missing" category.
+
+# This avoids median imputation and avoids dropping participants with missing
+# covariates from the IP weighted observation model.
+
+create_ipw_missing_indicator_covariates <- function(analysis_data, candidate_ipw_predictor_vars, numeric_n_quantile_groups = 5) {
+
+  # Work on a copy so that the original analysis dataset is not modified.
+  d <- data.table::copy(analysis_data)
+
+  ipw_model_vars <- character(0)
+
+  for (v in candidate_ipw_predictor_vars) {
+
+    # Skip unavailable variables
+    if (!v %chin% names(d)) next
+
+    v_cat <- paste0(v, "_ipw_cat")
+
+    # Numeric variables: convert to quantile categories + Missing
+    if (is.numeric(d[[v]]) || is.integer(d[[v]])) {
+
+      x <- d[[v]]
+
+      # If variable is entirely missing, skip it
+      if (all(is.na(x) | !is.finite(x))) next
+
+      # Create quantile cut-points
+      qs <- unique(
+        as.numeric(
+          quantile(
+            x,
+            probs = seq(0, 1, length.out = numeric_n_quantile_groups + 1),
+            na.rm = TRUE,
+            type = 7
+          )
+        )
+      )
+
+      # If too few unique cut-points, fall back to observed/missing only
+      if (length(qs) < 3L) {
+
+        tmp <- fifelse(
+          is.na(x) | !is.finite(x),
+          "Missing",
+          "Observed"
+        )
+
+      } else {
+
+        tmp <- as.character(
+          cut(
+            x,
+            breaks = qs,
+            include.lowest = TRUE,
+            right = FALSE
+          )
+        )
+
+        tmp[is.na(x) | !is.finite(x)] <- "Missing"
+      }
+
+      d[
+        ,
+        (v_cat) := factor(tmp)
+      ]
+
+    } else {
+
+      # Categorical/logical/character/factor variables: Missing as category
+      tmp <- as.character(d[[v]])
+      tmp[is.na(tmp) | trimws(tmp) == ""] <- "Missing"
+
+      d[
+        ,
+        (v_cat) := factor(tmp)
+      ]
+    }
+
+    # Only include variables with at least two categories
+    if (uniqueN(d[[v_cat]]) > 1L) {
+      ipw_model_vars <- c(ipw_model_vars, v_cat)
+    }
+  }
+
+  # Remove any variables with no variation after processing
+  ipw_model_vars <- ipw_model_vars[
+    vapply(
+      ipw_model_vars,
+      function(v) uniqueN(d[[v]], na.rm = TRUE) > 1L,
+      logical(1)
+    )
+  ]
+
+  list(
+    data = d,
+    model_vars = unique(ipw_model_vars)
+  )
+}
+
+
+#------------------------------------------------------------------------------#
+# Helper function: summarise IPW weights for diagnostics
+
+# These summaries help check whether the IPW analysis is relying on a small
+# number of very large weights. The effective sample size (ESS) is especially
+# useful: a much smaller ESS after weighting indicates unstable weights.
+
+summarise_ipw_weight_distribution <- function(observed_weighted_data, raw_w = "ipw") {
+
+  data.table(
+    ipw_raw_mean = mean(observed_weighted_data[[raw_w]], na.rm = TRUE),
+    ipw_raw_sd = sd(observed_weighted_data[[raw_w]], na.rm = TRUE),
+    ipw_raw_min = min(observed_weighted_data[[raw_w]], na.rm = TRUE),
+    ipw_raw_p01 = as.numeric(quantile(observed_weighted_data[[raw_w]], 0.01, na.rm = TRUE, type = 7)),
+    ipw_raw_p05 = as.numeric(quantile(observed_weighted_data[[raw_w]], 0.05, na.rm = TRUE, type = 7)),
+    ipw_raw_p50 = as.numeric(quantile(observed_weighted_data[[raw_w]], 0.50, na.rm = TRUE, type = 7)),
+    ipw_raw_p95 = as.numeric(quantile(observed_weighted_data[[raw_w]], 0.95, na.rm = TRUE, type = 7)),
+    ipw_raw_p99 = as.numeric(quantile(observed_weighted_data[[raw_w]], 0.99, na.rm = TRUE, type = 7)),
+    ipw_raw_max = max(observed_weighted_data[[raw_w]], na.rm = TRUE),
+
+    ipw_ess_raw = (sum(observed_weighted_data[[raw_w]], na.rm = TRUE)^2) /
+      sum(observed_weighted_data[[raw_w]]^2, na.rm = TRUE)
+  )
+}
+
+
+#------------------------------------------------------------------------------#
+# Helper function: IPW weighted paired change estimate
+
+# This returns one row for one outcome, subgroup, and change scale.
+
+# Observation model:
+#   observed complete baseline-follow-up pair ~ baseline variables
+
+# Analysis model:
+#   change ~ 1, weighted by stabilised inverse probability of observation weights
+
+# Interpretation:
+#   The IPW estimate is the weighted mean within-person change among observed
+#   complete pairs, reweighted to the full target population under the
+#   missing-at-random assumption conditional on included baseline covariates.
+
+estimate_ipw_paired_change_row <- function(
+    analysis_data,
+    baseline_outcome_var,
+    followup_outcome_var,
+    measure,
+    subgroup_type_label = "Full Sample",
+    subgroup = "Full Sample",
+    scale = c("Absolute Change", "Percent Change"),
+    subgroup_filter = NULL,
+    ipw_predictor_vars = c(
+      "age_cat5",
+      "bmi_0m_cat",
+      "eth_bin",
+      "area_imd_qt",
+      "blood_hba1c_mmolmol_0m"
+    ),
+    pct_denominator = c("baseline", "followup"),
+    digits_change = 2) {
+
+  #-----------------------------#
+  # Match arguments
+  
+  # `scale` determines whether the outcome is expressed as an absolute change
+  # or a percentage change. `pct_denominator` controls how percentage change is
+  # calculated; in this script the default is change divided by baseline.
+
+  scale <- match.arg(scale)
+  pct_denominator <- match.arg(pct_denominator)
+
+  #-----------------------------#
+  # Create working dataset
+  
+  # `outcome_population` starts as the full input dataset, then is optionally
+  # restricted to the requested subgroup.
+  # The IPW observation model targets the full analytical cohort,
+  # or the relevant subgroup-specific target population.
+
+  outcome_population <- data.table::copy(analysis_data)
+
+  # Restrict to subgroup if requested
+  if (!is.null(subgroup_filter)) {
+    outcome_population <- outcome_population[eval(subgroup_filter)]
+  }
+
+  # Target population denominator for this outcome
+  
+  # n_population = everyone in the target population for this outcome/subgroup.
+  # For full-sample analyses, this is the full analytical cohort.
+  # For subgroup analyses, this is the subgroup-specific population after applying
+  # the subgroup filter.
+  n_population <- nrow(outcome_population)
+
+  if (n_population == 0L) {
+    return(data.table(
+      measure = measure,
+      subgroup_type_label = subgroup_type_label,
+      subgroup = subgroup,
+      scale = scale,
+      n_population = 0L,
+      n_observed = 0L,
+      pct_observed = NA_real_,
+      cc_mean_change = NA_real_,
+      cc_ci_low = NA_real_,
+      cc_ci_high = NA_real_,
+      cc_p_raw = NA_real_,
+      ipw_mean_change = NA_real_,
+      ipw_ci_low = NA_real_,
+      ipw_ci_high = NA_real_,
+      ipw_p_raw = NA_real_,
+      ipw_mean_weight = NA_real_,
+      ipw_min_weight = NA_real_,
+      ipw_max_weight = NA_real_
+    ))
+  }
+
+  # Baseline and follow-up observation indicators
+  
+  # `observed_bl` records whether the baseline value exists.
+  # `observed_fu` records whether the follow-up value exists.
+  # `observed_analysis` later checks that the specific paired change variable
+  # being analysed is finite and valid.
+  outcome_population[
+    ,
+    observed_bl := !is.na(get(baseline_outcome_var)) & is.finite(get(baseline_outcome_var))
+  ]
+
+  outcome_population[
+    ,
+    observed_fu := !is.na(get(followup_outcome_var)) & is.finite(get(followup_outcome_var))
+  ]
+
+  # Outcome change variables
+  
+  # Both absolute and percentage changes are created here so that the rest of
+  # the function can switch between them using `change_var`.
+  # Change values are only defined for participants with both baseline and
+  # follow-up values. Participants without a complete pair remain in the target
+  # population for the observation model, but do not contribute directly to the
+  # weighted mean change estimate.
+  outcome_population[
+    ,
+    change_abs := fifelse(
+      observed_bl & observed_fu,
+      get(followup_outcome_var) - get(baseline_outcome_var),
+      NA_real_
+    )
+  ]
+
+  if (pct_denominator == "baseline") {
+    outcome_population[
+      ,
+      change_pct := fifelse(
+        observed_bl & observed_fu &
+          is.finite(get(baseline_outcome_var)) & get(baseline_outcome_var) != 0,
+        (get(followup_outcome_var) - get(baseline_outcome_var)) / get(baseline_outcome_var) * 100,
+        NA_real_
+      )
+    ]
+  } else {
+    outcome_population[
+      ,
+      change_pct := fifelse(
+        observed_bl & observed_fu &
+          is.finite(get(followup_outcome_var)) & get(followup_outcome_var) != 0,
+        (get(followup_outcome_var) - get(baseline_outcome_var)) / get(followup_outcome_var) * 100,
+        NA_real_
+      )
+    ]
+  }
+
+  change_var <- if (scale == "Absolute Change") "change_abs" else "change_pct"
+
+  # Restrict observed indicator to valid paired change for this specific scale
+  
+  # For absolute change, this requires observed baseline and follow-up values.
+  # For percentage change, this additionally requires a valid non-zero denominator.
+  outcome_population[
+    ,
+    observed_analysis := !is.na(get(change_var)) & is.finite(get(change_var))
+  ]
+
+  # Outcome availability for this target population
+
+  # n_population = everyone in the target population.
+  # n_observed = subset with a valid baseline-follow-up pair for this outcome/scale.
+  # pct_observed = percentage of the target population contributing to the paired
+  # complete-case/IPW analysis.
+  n_observed <- outcome_population[observed_analysis == TRUE, .N]
+  pct_observed <- 100 * n_observed / n_population
+
+  # Stop if insufficient observed paired data
+  if (n_observed < 2L) {
+    return(data.table(
+      measure = measure,
+      subgroup_type_label = subgroup_type_label,
+      subgroup = subgroup,
+      scale = scale,
+      n_population = n_population,
+      n_observed = n_observed,
+      pct_observed = pct_observed,
+      cc_mean_change = NA_real_,
+      cc_ci_low = NA_real_,
+      cc_ci_high = NA_real_,
+      cc_p_raw = NA_real_,
+      ipw_mean_change = NA_real_,
+      ipw_ci_low = NA_real_,
+      ipw_ci_high = NA_real_,
+      ipw_p_raw = NA_real_,
+      ipw_mean_weight = NA_real_,
+      ipw_min_weight = NA_real_,
+      ipw_max_weight = NA_real_
+    ))
+  }
+
+  #-----------------------------#
+  # Complete-case paired estimate
+  
+  # This is the main paired analysis among participants with both baseline and
+  # follow-up values. It is kept alongside the IPW result so that the sensitivity
+  # analysis can be compared directly with the original complete-case estimate.
+
+  complete_case_data <- outcome_population[observed_analysis == TRUE]
+
+  complete_case_ttest <- stats::t.test(complete_case_data[[change_var]], mu = 0)
+
+  cc_mean_change <- mean(complete_case_data[[change_var]], na.rm = TRUE)
+  cc_ci_low <- unname(complete_case_ttest$conf.int[1])
+  cc_ci_high <- unname(complete_case_ttest$conf.int[2])
+  cc_p_raw <- unname(complete_case_ttest$p.value)
+
+  #-----------------------------#
+  # IPW observation model
+  
+  # The outcome of this model is whether the participant has a complete
+  # baseline-follow-up pair for the outcome being analysed.
+  # The predictors are key baseline characteristics specified later. 
+  # This estimates each participant's probability of having complete paired 
+  # outcome data, conditional on measured baseline information.
+  
+  # Candidate IPW predictors:
+  # - prespecified baseline covariates
+    
+  # Missing covariate values are handled using a missing-indicator method rather
+  # than by complete-case restriction.
+
+  candidate_ipw_predictor_vars <- unique(ipw_predictor_vars)
+  candidate_ipw_predictor_vars <- keep_available_ipw_predictors(outcome_population, candidate_ipw_predictor_vars)
+
+  # Prepare IPW model dataset using missing-indicator method
+  ipw_prep <- create_ipw_missing_indicator_covariates(
+    analysis_data = outcome_population,
+    candidate_ipw_predictor_vars = candidate_ipw_predictor_vars
+  )
+
+  ipw_model_data <- ipw_prep$data
+  ipw_model_vars <- ipw_prep$model_vars
+
+  # If the model is too sparse, drop back to intercept-only observation model
+  
+  # This prevents the function failing in very small subgroups or when there is
+  # no variation in observation status/predictors. In that case, everyone gets
+  # the same predicted observation probability, so the IPW estimate collapses
+  # back toward the complete-case estimate.
+  if (nrow(ipw_model_data) < 20L ||
+      length(unique(ipw_model_data$observed_analysis)) < 2L ||
+      length(ipw_model_vars) == 0L) {
+
+    ipw_model_data[
+      ,
+      prob_observed := mean(observed_analysis, na.rm = TRUE)
+    ]
+
+  } else {
+
+    # Build observation model formula
+    observation_model_formula <- as.formula(
+      paste0(
+        "observed_analysis ~ ",
+        paste(backtick_for_formula(ipw_model_vars), collapse = " + ")
+      )
+    )
+
+    # Fit model
+    observation_model_fit <- glm(
+      observation_model_formula,
+      data = ipw_model_data,
+      family = binomial()
+    )
+
+    # Predict probability of being observed
+    ipw_model_data[
+      ,
+      prob_observed := as.numeric(predict(observation_model_fit, newdata = ipw_model_data, type = "response"))
+    ]
+  }
+
+  # Bound predicted probabilities slightly to avoid infinite/unstable weights
+  
+  # Without this, predicted probabilities extremely close to 0 or 1 can create
+  # very large weights or numerical instability. This is a defensive numerical
+  # step, not a substantive modelling choice.
+  ipw_model_data[
+    ,
+    prob_observed := pmin(pmax(prob_observed, 1e-4), 1 - 1e-4)
+  ]
+
+  # Replace outcome_population with the IPW model dataset so that no rows are lost through
+  # complete-case restriction for missing covariates
+  outcome_population <- ipw_model_data
+
+  #-----------------------------#
+  # Create stabilised inverse probability of observation weights
+  
+  # Stabilised weight = marginal probability of having a complete pair /
+  #                     predicted probability of having a complete pair
+  
+  # Participants who look unlikely to have complete paired outcome data, based on
+  # their baseline characteristics, receive larger weights if they are observed.
+  # Participants who look very likely to be observed receive smaller weights.
+
+  # Marginal probability of complete paired data in the target population
+  marginal_prob_observed <- mean(outcome_population$observed_analysis, na.rm = TRUE)
+
+  outcome_population[
+    ,
+    ipw := marginal_prob_observed / prob_observed
+  ]
+
+  # Restrict to observed outcome rows
+  
+  # Only participants with observed paired changes contribute to the weighted
+  # mean. The weights make those observed participants represent the wider
+  # target population under the missing-at-random assumption.
+  observed_weighted_data <- outcome_population[
+    observed_analysis == TRUE &
+      !is.na(ipw) & is.finite(ipw) &
+      !is.na(get(change_var)) & is.finite(get(change_var))
+  ]
+
+  # Summarise raw weights for diagnostics
+  ipw_weight_diagnostics <- summarise_ipw_weight_distribution(observed_weighted_data)
+
+  #-----------------------------#
+  # IPW weighted mean change using survey-weighted intercept-only model
+  
+  # A model with only an intercept estimates the weighted mean change. The survey
+  # package is used so that the standard error and confidence interval reflect
+  # the supplied weights.
+
+  ipw_survey_design <- survey::svydesign(
+    ids = ~1,
+    weights = ~ipw,
+    data = observed_weighted_data
+  )
+
+  ipw_intercept_model <- survey::svyglm(
+    as.formula(paste0(change_var, " ~ 1")),
+    design = ipw_survey_design
+  )
+
+  ipw_mean_change_estimate <- unname(coef(ipw_intercept_model)[1])
+  ipw_mean_change_se <- sqrt(vcov(ipw_intercept_model)[1, 1])
+
+  ipw_degrees_freedom <- survey::degf(ipw_survey_design)
+  ipw_t_statistic <- ipw_mean_change_estimate / ipw_mean_change_se
+  ipw_p_raw <- 2 * stats::pt(abs(ipw_t_statistic), df = ipw_degrees_freedom, lower.tail = FALSE)
+
+  ipw_ci_low <- ipw_mean_change_estimate - stats::qt(0.975, df = ipw_degrees_freedom) * ipw_mean_change_se
+  ipw_ci_high <- ipw_mean_change_estimate + stats::qt(0.975, df = ipw_degrees_freedom) * ipw_mean_change_se
+
+  #-----------------------------#
+  # Return table row
+
+  out <- data.table(
+    measure = measure,
+    subgroup_type_label = subgroup_type_label,
+    subgroup = subgroup,
+    scale = scale,
+
+    n_population = n_population,
+    n_observed = n_observed,
+    pct_observed = pct_observed,
+
+    cc_mean_change = cc_mean_change,
+    cc_ci_low = cc_ci_low,
+    cc_ci_high = cc_ci_high,
+    cc_p_raw = cc_p_raw,
+
+    ipw_mean_change = ipw_mean_change_estimate,
+    ipw_ci_low = ipw_ci_low,
+    ipw_ci_high = ipw_ci_high,
+    ipw_p_raw = ipw_p_raw,
+
+    ipw_mean_weight = mean(observed_weighted_data$ipw, na.rm = TRUE),
+    ipw_min_weight = min(observed_weighted_data$ipw, na.rm = TRUE),
+    ipw_max_weight = max(observed_weighted_data$ipw, na.rm = TRUE),
+
+    ipw_model_covars = paste(ipw_model_vars, collapse = "; ")
+  )
+
+  cbind(out, ipw_weight_diagnostics)
+}
+
+```
+
+b) Build table
+```{r}
+#------------------------------------------------------------------------------#
+# Build rows for reference table
+
+# The helper above returns one row per call. The next three sections call it for:
+#   1) the two primary weight outcomes,
+#   2) the six secondary blood-test outcomes,
+#   3) the three baseline HbA1c category-specific outcomes.
+
+#-----------------------------#
+# Primary weight outcomes
+# No FDR adjustment applied
+
+rtab7_weight_rows <- data.table::rbindlist(
+  list(
+    estimate_ipw_paired_change_row(
+      data_wide,
+      baseline_outcome_var = "wt_kg_0m",
+      followup_outcome_var   = "wt_kg_6m",
+      measure  = "Weight (kg)",
+      subgroup_type_label = "Primary Weight Outcomes",
+      subgroup = "Full Sample",
+      scale = "Absolute Change"
+    ),
+
+    estimate_ipw_paired_change_row(
+      data_wide,
+      baseline_outcome_var = "wt_kg_0m",
+      followup_outcome_var   = "wt_kg_6m",
+      measure  = "Weight (% change)",
+      subgroup_type_label = "Primary Weight Outcomes",
+      subgroup = "Full Sample",
+      scale = "Percent Change"
+    )
+  ),
+  use.names = TRUE,
+  fill = TRUE
+)
+
+rtab7_weight_rows[
+  ,
+  `:=`(
+    fdr_family = "Primary weight outcome",
+    cc_p_fdr = NA_real_,
+    ipw_p_fdr = NA_real_
+  )
+]
+
+
+#-----------------------------#
+# Main blood-test outcomes
+# FDR adjustment applied across these 6 rows
+
+rtab7_blood_rows <- data.table::rbindlist(
+  list(
+    estimate_ipw_paired_change_row(
+      data_wide,
+      baseline_outcome_var = "blood_hba1c_mmolmol_0m",
+      followup_outcome_var   = "blood_hba1c_mmolmol_6m",
+      measure  = "HbA1c (mmol/mol)",
+      subgroup_type_label = "Secondary Blood Test Outcomes",
+      subgroup = "Full Sample",
+      scale = "Absolute Change"
+    ),
+
+    estimate_ipw_paired_change_row(
+      data_wide,
+      baseline_outcome_var = "blood_hba1c_mmolmol_0m",
+      followup_outcome_var   = "blood_hba1c_mmolmol_6m",
+      measure  = "HbA1c (% change)",
+      subgroup_type_label = "Secondary Blood Test Outcomes",
+      subgroup = "Full Sample",
+      scale = "Percent Change"
+    ),
+
+    estimate_ipw_paired_change_row(
+      data_wide,
+      baseline_outcome_var = "blood_chol_mmoll_0m",
+      followup_outcome_var   = "blood_chol_mmoll_6m",
+      measure  = "Total Cholesterol (mmol/L)",
+      subgroup_type_label = "Secondary Blood Test Outcomes",
+      subgroup = "Full Sample",
+      scale = "Absolute Change"
+    ),
+
+    estimate_ipw_paired_change_row(
+      data_wide,
+      baseline_outcome_var = "blood_hdl_mmoll_0m",
+      followup_outcome_var   = "blood_hdl_mmoll_6m",
+      measure  = "HDL (mmol/L)",
+      subgroup_type_label = "Secondary Blood Test Outcomes",
+      subgroup = "Full Sample",
+      scale = "Absolute Change"
+    ),
+
+    estimate_ipw_paired_change_row(
+      data_wide,
+      baseline_outcome_var = "blood_ldl_mmoll_0m",
+      followup_outcome_var   = "blood_ldl_mmoll_6m",
+      measure  = "LDL (mmol/L)",
+      subgroup_type_label = "Secondary Blood Test Outcomes",
+      subgroup = "Full Sample",
+      scale = "Absolute Change"
+    ),
+
+    estimate_ipw_paired_change_row(
+      data_wide,
+      baseline_outcome_var = "blood_tg_mmoll_0m",
+      followup_outcome_var   = "blood_tg_mmoll_6m",
+      measure  = "Triglycerides (mmol/L)",
+      subgroup_type_label = "Secondary Blood Test Outcomes",
+      subgroup = "Full Sample",
+      scale = "Absolute Change"
+    )
+  ),
+  use.names = TRUE,
+  fill = TRUE
+)
+
+rtab7_blood_rows[
+  ,
+  `:=`(
+    fdr_family = "Six blood-test outcomes",
+    cc_p_fdr = p.adjust(cc_p_raw, method = "BH"),
+    ipw_p_fdr = p.adjust(ipw_p_raw, method = "BH")
+  )
+]
+
+
+#-----------------------------#
+# HbA1c change by baseline HbA1c category
+# FDR adjustment applied across these 3 rows
+
+# These subgroup rows are restricted to participants with a known baseline HbA1c
+# category, because the subgroup itself is defined by the baseline HbA1c value.
+# Within each HbA1c category, IPW reweights the observed complete pairs to the
+# subgroup-specific target population.
+
+rtab7_hba1c_cat_rows <- data.table::rbindlist(
+  list(
+    estimate_ipw_paired_change_row(
+      data_wide,
+      baseline_outcome_var = "blood_hba1c_mmolmol_0m",
+      followup_outcome_var   = "blood_hba1c_mmolmol_6m",
+      measure  = "HbA1c (mmol/mol)",
+      subgroup_type_label = "Secondary HbA1c Outcomes by Baseline Category",
+      subgroup = "Baseline Diabetic (≥48 mmol/mol)",
+      scale = "Absolute Change",
+      subgroup_filter = quote(!is.na(hba1c_cat_0m) & hba1c_cat_0m == "Diabetic")
+    ),
+
+    estimate_ipw_paired_change_row(
+      data_wide,
+      baseline_outcome_var = "blood_hba1c_mmolmol_0m",
+      followup_outcome_var   = "blood_hba1c_mmolmol_6m",
+      measure  = "HbA1c (mmol/mol)",
+      subgroup_type_label = "Secondary HbA1c Outcomes by Baseline Category",
+      subgroup = "Baseline Pre-diabetic (42 to <48 mmol/mol)",
+      scale = "Absolute Change",
+      subgroup_filter = quote(!is.na(hba1c_cat_0m) & hba1c_cat_0m == "Pre-Diabetic")
+    ),
+
+    estimate_ipw_paired_change_row(
+      data_wide,
+      baseline_outcome_var = "blood_hba1c_mmolmol_0m",
+      followup_outcome_var   = "blood_hba1c_mmolmol_6m",
+      measure  = "HbA1c (mmol/mol)",
+      subgroup_type_label = "Secondary HbA1c Outcomes by Baseline Category",
+      subgroup = "Baseline Normal (<42 mmol/mol)",
+      scale = "Absolute Change",
+      subgroup_filter = quote(!is.na(hba1c_cat_0m) & hba1c_cat_0m == "Normal")
+    )
+  ),
+  use.names = TRUE,
+  fill = TRUE
+)
+
+rtab7_hba1c_cat_rows[
+  ,
+  `:=`(
+    fdr_family = "Three baseline HbA1c category outcomes",
+    cc_p_fdr = p.adjust(cc_p_raw, method = "BH"),
+    ipw_p_fdr = p.adjust(ipw_p_raw, method = "BH")
+  )
+]
+
+
+#------------------------------------------------------------------------------#
+# Combine RTab7 results
+
+# From this point onward, the code is table formatting/export only. The estimates
+# have already been calculated in the three row objects above.
+
+rtab7_ipw_results <- data.table::rbindlist(
+  list(
+    rtab7_weight_rows,
+    rtab7_blood_rows,
+    rtab7_hba1c_cat_rows
+  ),
+  use.names = TRUE,
+  fill = TRUE
+)
+
+
+#------------------------------------------------------------------------------#
+# Ordering
+
+rtab7_ipw_results[
+  ,
+  group_order := fifelse(
+    subgroup_type_label == "Primary Weight Outcomes", 1L,
+    fifelse(
+      subgroup_type_label == "Secondary Blood Test Outcomes", 2L,
+      fifelse(subgroup_type_label == "Secondary HbA1c Outcomes by Baseline Category", 3L, 99L)
+    )
+  )
+]
+
+rtab7_measure_levels <- c(
+  "Weight (kg)",
+  "Weight (% change)",
+  "HbA1c (mmol/mol)",
+  "HbA1c (% change)",
+  "Total Cholesterol (mmol/L)",
+  "HDL (mmol/L)",
+  "LDL (mmol/L)",
+  "Triglycerides (mmol/L)"
+)
+
+rtab7_ipw_results[
+  ,
+  measure := factor(measure, levels = rtab7_measure_levels)
+]
+
+rtab7_ipw_results[
+  ,
+  hba1c_cat_order := fifelse(
+    subgroup == "Baseline Diabetic (≥48 mmol/mol)", 1L,
+    fifelse(
+      subgroup == "Baseline Pre-diabetic (42 to <48 mmol/mol)", 2L,
+      fifelse(subgroup == "Baseline Normal (<42 mmol/mol)", 3L, 0L)
+    )
+  )
+]
+
+data.table::setorder(
+  rtab7_ipw_results,
+  group_order,
+  measure,
+  hba1c_cat_order,
+  scale
+)
+
+
+#------------------------------------------------------------------------------#
+# Create separate IPW weight diagnostics table
+
+# This table is for checking whether weights are inflated/unstable by outcome.
+# This is used as a manual check before exporting the main results table and
+# interpreting the IPW estimates.
+
+rtab7_ipw_weight_diagnostics <- rtab7_ipw_results[
+  ,
+  .(
+    subgroup_type_label,
+    subgroup,
+    measure,
+    scale,
+
+    n_population,
+    n_observed,
+    pct_observed,
+
+    ipw_raw_mean,
+    ipw_raw_sd,
+    ipw_raw_min,
+    ipw_raw_p01,
+    ipw_raw_p05,
+    ipw_raw_p50,
+    ipw_raw_p95,
+    ipw_raw_p99,
+    ipw_raw_max,
+
+    ipw_ess_raw,
+
+    ipw_model_covars
+  )
+]
+
+# Round diagnostic columns for review
+rtab7_ipw_weight_diagnostics[
+  ,
+  c(
+    "pct_observed",
+    "ipw_raw_mean", "ipw_raw_sd", "ipw_raw_min", "ipw_raw_p01",
+    "ipw_raw_p05", "ipw_raw_p50", "ipw_raw_p95", "ipw_raw_p99",
+    "ipw_raw_max",
+    "ipw_ess_raw"
+  ) := lapply(
+    .SD,
+    round,
+    3
+  ),
+  .SDcols = c(
+    "pct_observed",
+    "ipw_raw_mean", "ipw_raw_sd", "ipw_raw_min", "ipw_raw_p01",
+    "ipw_raw_p05", "ipw_raw_p50", "ipw_raw_p95", "ipw_raw_p99",
+    "ipw_raw_max",
+    "ipw_ess_raw"
+  )
+]
+
+# View diagnostic table
+rtab7_ipw_weight_diagnostics
+
+
+#------------------------------------------------------------------------------#
+# Export IPW weight diagnostics table as CSV
+
+fwrite(
+  rtab7_ipw_weight_diagnostics,
+  file = "Final Outputs/rtab7extra-ipw-weight-diagnostics-raw.csv",
+  bom = TRUE,
+  quote = TRUE
+)
+
+
+#------------------------------------------------------------------------------#
+# Create gt diagnostics table
+
+rtab7_ipw_weight_diagnostics_html <- rtab7_ipw_weight_diagnostics |>
+  gt(groupname_col = "subgroup_type_label") |>
+  cols_label(
+    subgroup = "Subgroup",
+    measure = "Outcome",
+    scale = "Measure",
+    n_population = "Target N",
+    n_observed = "Observed Pair N",
+    pct_observed = "% Observed",
+
+    ipw_raw_mean = "Mean",
+    ipw_raw_sd = "SD",
+    ipw_raw_min = "Min",
+    ipw_raw_p01 = "P1",
+    ipw_raw_p05 = "P5",
+    ipw_raw_p50 = "Median",
+    ipw_raw_p95 = "P95",
+    ipw_raw_p99 = "P99",
+    ipw_raw_max = "Max",
+
+    ipw_ess_raw = "Raw ESS",
+    ipw_model_covars = "Model Covariates"
+  ) |>
+  cols_align(
+    align = "left",
+    columns = c(subgroup, measure, scale, ipw_model_covars)
+  ) |>
+  cols_align(
+    align = "center",
+    columns = c(
+      n_population,
+      n_observed,
+      pct_observed,
+      ipw_raw_mean:ipw_ess_raw
+    )
+  ) |>
+  tab_spanner(
+    label = "Outcome Availability",
+    columns = c(n_population, n_observed, pct_observed)
+  ) |>
+  tab_spanner(
+    label = "Stabilised Weights",
+    columns = c(
+      ipw_raw_mean,
+      ipw_raw_sd,
+      ipw_raw_min,
+      ipw_raw_p01,
+      ipw_raw_p05,
+      ipw_raw_p50,
+      ipw_raw_p95,
+      ipw_raw_p99,
+      ipw_raw_max
+    )
+  ) |>
+  tab_spanner(
+    label = "Effective Sample Size",
+    columns = c(ipw_ess_raw)
+  ) |>
+  tab_source_note(
+    source_note = md(
+      "ESS = effective sample size. Stabilised weights were calculated as the marginal probability of having observed complete paired outcome data divided by the predicted probability of having observed complete paired outcome data. Missing covariate values were handled using a missing-indicator method."
+    )
+  ) |>
+  tab_options(
+    table.font.size = px(11),
+    row_group.font.weight = "600",
+    data_row.padding = px(3),
+    row_group.padding = px(6)
+  )
+
+rtab7_ipw_weight_diagnostics_html
+
+
+#------------------------------------------------------------------------------#
+# Save gt diagnostics table as HTML
+
+gtsave(
+  rtab7_ipw_weight_diagnostics_html,
+  filename = "rtab7extra-ipw-weight-diagnostics-html.html",
+  path = "Final Outputs/"
+)
+
+
+#------------------------------------------------------------------------------#
+# Create formatted columns for final RTab7 table
+#
+# The raw numeric estimates are retained for export, while additional formatted
+# columns are created for the gt manuscript/supplementary table.
+
+rtab7_ipw_results[
+  ,
+  `:=`(
+    pct_observed = round(pct_observed, 1),
+
+    cc_mean_change = round(cc_mean_change, 2),
+    cc_ci_low = round(cc_ci_low, 2),
+    cc_ci_high = round(cc_ci_high, 2),
+
+    ipw_mean_change = round(ipw_mean_change, 2),
+    ipw_ci_low = round(ipw_ci_low, 2),
+    ipw_ci_high = round(ipw_ci_high, 2),
+
+    ipw_mean_weight = round(ipw_mean_weight, 2),
+    ipw_min_weight = round(ipw_min_weight, 2),
+    ipw_max_weight = round(ipw_max_weight, 2)
+  )
+]
+
+rtab7_ipw_results[
+  ,
+  `:=`(
+    cc_mean_ci = sprintf(
+      "%.2f (%.2f, %.2f)",
+      cc_mean_change, cc_ci_low, cc_ci_high
+    ),
+    ipw_mean_ci = sprintf(
+      "%.2f (%.2f, %.2f)",
+      ipw_mean_change, ipw_ci_low, ipw_ci_high
+    ),
+    cc_p_raw_fmt = format_p_value_rtab7(cc_p_raw),
+    cc_p_fdr_fmt = format_p_value_rtab7(cc_p_fdr),
+    ipw_p_raw_fmt = format_p_value_rtab7(ipw_p_raw),
+    ipw_p_fdr_fmt = format_p_value_rtab7(ipw_p_fdr),
+    ipw_weight_range = sprintf(
+      "%.2f (%.2f, %.2f)",
+      ipw_mean_weight, ipw_min_weight, ipw_max_weight
+    )
+  )
+]
+
+# Leave FDR blank for primary weight outcomes
+rtab7_ipw_results[
+  subgroup_type_label == "Primary Weight Outcomes",
+  `:=`(
+    cc_p_fdr_fmt = "",
+    ipw_p_fdr_fmt = ""
+  )
+]
+
+# Create scale label
+rtab7_ipw_results[
+  ,
+  scale := factor(
+    scale,
+    levels = c("Absolute Change", "Percent Change")
+  )
+]
+
+
+#------------------------------------------------------------------------------#
+# Final table columns
+
+rtab7_ipw_results <- rtab7_ipw_results[
+  ,
+  .(
+    subgroup_type_label,
+    subgroup,
+    measure,
+    scale,
+
+    n_population,
+    n_observed,
+    pct_observed,
+
+    cc_mean_change,
+    cc_ci_low,
+    cc_ci_high,
+    cc_p_raw,
+    cc_p_fdr,
+    cc_mean_ci,
+    cc_p_raw_fmt,
+    cc_p_fdr_fmt,
+
+    ipw_mean_change,
+    ipw_ci_low,
+    ipw_ci_high,
+    ipw_p_raw,
+    ipw_p_fdr,
+    ipw_mean_ci,
+    ipw_p_raw_fmt,
+    ipw_p_fdr_fmt,
+
+    ipw_mean_weight,
+    ipw_min_weight,
+    ipw_max_weight,
+    ipw_weight_range,
+
+    fdr_family
+  )
+]
+
+# View result
+rtab7_ipw_results
+
+
+#------------------------------------------------------------------------------#
+# Export final RTab7 raw table as CSV
+
+fwrite(
+  rtab7_ipw_results,
+  file = "Final Outputs/rtab7extra-ipw-sensitivity-results-raw.csv",
+  bom = TRUE,
+  quote = TRUE
+)
+
+
+#------------------------------------------------------------------------------#
+# Create final gt table
+
+rtab7_ipw_results_html <- rtab7_ipw_results |>
+  gt(groupname_col = "subgroup_type_label") |>
+  cols_label(
+    subgroup = "Subgroup",
+    measure = "Outcome",
+    scale = "Measure",
+
+    cc_mean_ci = "Mean Change (95% CI)",
+    cc_p_raw_fmt = html("P"),
+    cc_p_fdr_fmt = html("FDR-adj. P"),
+
+    ipw_mean_ci = "Mean Change (95% CI)",
+    ipw_p_raw_fmt = html("P"),
+    ipw_p_fdr_fmt = html("FDR-adj. P"),
+
+    ipw_weight_range = "Stabilised Weight, Mean (Min, Max)"
+  ) |>
+  cols_align(
+    align = "left",
+    columns = c(subgroup, measure, scale)
+  ) |>
+  cols_align(
+    align = "center",
+    columns = c(
+      cc_mean_ci,
+      cc_p_raw_fmt,
+      cc_p_fdr_fmt,
+      ipw_mean_ci,
+      ipw_p_raw_fmt,
+      ipw_p_fdr_fmt,
+      ipw_weight_range
+    )
+  ) |>
+  cols_hide(
+    columns = c(
+      n_population,
+      n_observed,
+      pct_observed,
+  
+      cc_mean_change,
+      cc_ci_low,
+      cc_ci_high,
+      cc_p_raw,
+      cc_p_fdr,
+  
+      ipw_mean_change,
+      ipw_ci_low,
+      ipw_ci_high,
+      ipw_p_raw,
+      ipw_p_fdr,
+  
+      ipw_mean_weight,
+      ipw_min_weight,
+      ipw_max_weight,
+  
+      fdr_family
+    )
+  ) |>
+  tab_spanner(
+    label = "Outcome Availability",
+    columns = c(n_population, n_observed, pct_observed)
+  ) |>
+  tab_spanner(
+    label = "Complete-Case Estimate",
+    columns = c(cc_mean_ci, cc_p_raw_fmt, cc_p_fdr_fmt)
+  ) |>
+  tab_spanner(
+    label = "IPW Estimate",
+    columns = c(ipw_mean_ci, ipw_p_raw_fmt, ipw_p_fdr_fmt)
+  ) |>
+  tab_spanner(
+    label = "IPW Diagnostics",
+    columns = c(ipw_weight_range)
+  ) |>
+  tab_options(
+    table.font.size = px(12),
+    row_group.font.weight = "600",
+    data_row.padding = px(4),
+    row_group.padding = px(6)
+  )
+
+rtab7_ipw_results_html
+
+
+#------------------------------------------------------------------------------#
+# Save final gt table as HTML
+
+gtsave(
+  rtab7_ipw_results_html,
+  filename = "rtab7-ipw-sensitivity-results-html.html",
+  path = "Final Outputs/"
+)
+
+```
 
 
 ################################################################################ 
@@ -3177,7 +4651,7 @@ labels <- list(
     area_imd_qt             = "Index of Multiple Deprivation (Quintile)"
   ),
 
-  # Column group header (matches the blog example layout)
+  # Column group header
   groups = list("", "Baseline Weight")
 )
 
@@ -4114,10 +5588,13 @@ ggsave(
 # MFig3. Weight change trajectory plots (subgroup stratified)
 ################################################################################ 
 
-a) Age Group Stratified
+x) Partial F-test for p-value calculation
 ```{r}
 #------------------------------------------------------------------------------#
 # Partial F-test for p-value calculation
+
+#-------------------------------#
+# Age
 
 # Subset to complete case dataset (for explanatory var)
 data_wide_agefull <- data_wide[!is.na(age_cat5)]
@@ -4138,10 +5615,118 @@ anova(lm_wt_age_unadj, lm_wt_age_adj)
 pf_age <- anova(lm_wt_age_unadj, lm_wt_age_adj)$`Pr(>F)`[2]
 pf_age
 
-# Format p-value with custom function
-format_pval(pf_age)
+#-------------------------------#
+# IMD Quintiles
+
+# Subset to complete case dataset (for explanatory var)
+data_wide_imdfull <- data_wide[!is.na(area_imd_qt)]
+
+# Unadjusted model
+lm_wt_imd_unadj <- lm(wt_change_kg_06m ~ 1, data = data_wide_imdfull)
+summary(lm_wt_imd_unadj)
+
+# Unadjusted model
+lm_wt_imd_adj <- lm(wt_change_kg_06m ~ area_imd_qt, data = data_wide_imdfull)
+summary(lm_wt_imd_adj)
+
+# Partial F-test (nested model comparison)
+# H0: all age_cat5 coefficients = 0  (i.e., age_cat5 adds no explanatory power)
+anova(lm_wt_imd_unadj, lm_wt_imd_adj)
+
+# Extract patial F-test p-value
+pf_imd <- anova(lm_wt_imd_unadj, lm_wt_imd_adj)$`Pr(>F)`[2]
+pf_imd
+
+#-------------------------------#
+# Ethnicity
+
+# Subset to complete case dataset (for explanatory var)
+data_wide_ethfull <- data_wide[!is.na(eth_bin)]
+
+# Unadjusted model
+lm_wt_eth_unadj <- lm(wt_change_kg_06m ~ 1, data = data_wide_ethfull)
+summary(lm_wt_eth_unadj)
+
+# Unadjusted model
+lm_wt_eth_adj <- lm(wt_change_kg_06m ~ eth_bin, data = data_wide_ethfull)
+summary(lm_wt_eth_adj)
+
+# Partial F-test (nested model comparison)
+# H0: all age_cat5 coefficients = 0  (i.e., age_cat5 adds no explanatory power)
+anova(lm_wt_eth_unadj, lm_wt_eth_adj)
+
+# Extract patial F-test p-value
+pf_eth <- anova(lm_wt_eth_unadj, lm_wt_eth_adj)$`Pr(>F)`[2]
+pf_eth
+
+#-------------------------------#
+# Starting weight group
+
+# Subset to complete case dataset (for explanatory var)
+data_wide_wtgrpfull <- data_wide[!is.na(wt_kg_0m_cat)]
+
+# Unadjusted model
+lm_wt_wtgrp_unadj <- lm(wt_change_kg_06m ~ 1, data = data_wide_wtgrpfull)
+summary(lm_wt_wtgrp_unadj)
+
+# Unadjusted model
+lm_wt_wtgrp_adj <- lm(wt_change_kg_06m ~ wt_kg_0m_cat, data = data_wide_wtgrpfull)
+summary(lm_wt_wtgrp_adj)
+
+# Partial F-test (nested model comparison)
+# H0: all age_cat5 coefficients = 0  (i.e., age_cat5 adds no explanatory power)
+anova(lm_wt_wtgrp_unadj, lm_wt_wtgrp_adj)
+
+# Extract patial F-test p-value
+pf_wtgrp <- anova(lm_wt_wtgrp_unadj, lm_wt_wtgrp_adj)$`Pr(>F)`[2]
+pf_wtgrp
 
 
+#------------------------------------------------------------------------------#
+# Benjamini-Hochberg FDR adjustment across Figure 3 subgroup tests
+
+# Combine raw P values from the four global partial F-tests
+fig3_pvals_raw <- c(
+  pf_wtgrp,
+  pf_age,
+  pf_imd,
+  pf_eth
+)
+
+# Apply Benjamini-Hochberg false discovery rate adjustment
+fig3_pvals_fdr <- p.adjust(fig3_pvals_raw, method = "BH")
+
+# Pull FDR-adjusted p-values back out
+pf_fdr_wtgrp <- fig3_pvals_fdr[1]
+pf_fdr_age   <- fig3_pvals_fdr[2]
+pf_fdr_imd   <- fig3_pvals_fdr[3]
+pf_fdr_eth   <- fig3_pvals_fdr[4]
+
+# Create a quick table to inspect raw and adjusted P values
+fig3_pvals_tbl <- data.table(
+  comparison = c(
+    "Baseline weight",
+    "Age group",
+    "IMD quintile",
+    "Ethnicity"
+  ),
+  p_raw = fig3_pvals_raw,
+  p_fdr = fig3_pvals_fdr
+)
+
+fig3_pvals_tbl[
+  , `:=`(
+    p_raw_fmt = sapply(p_raw, format_pval),
+    p_fdr_fmt = sapply(p_fdr, format_pval)
+  )
+]
+
+print(fig3_pvals_tbl)
+
+```
+
+a) Age Group Stratified
+```{r}
 #------------------------------------------------------------------------------#
 # Create mean line plot for 5 age groups
 
@@ -4175,11 +5760,13 @@ mfig3a_age_main <- ggplot(
     x = "Weeks Since GLP-1 Initiation",
     y = "Mean Weight Change (kg)",  # add separately in full figure
     title = "Stratified by Age Group",
-    subtitle = paste0("P for difference between age groups at 6 months: ", format_pval(pf_age)),
+    subtitle = paste0("Unadjusted P Value for difference between age groups at 6 months: ", format_pval(pf_age),
+                      "\nFDR-adj. P Value for difference between age groups at 6 months: ", format_pval(pf_fdr_age)),
     colour = "Age Group"
   ) +
   fig_theme +
   theme(
+    plot.subtitle = element_text(lineheight = 1.20)
     #axis.title.y = element_blank()
   ) +
   scale_x_continuous(breaks = seq(0, 26, by = 2)) +
@@ -4248,32 +5835,6 @@ plot(mfig3a_age)
 b) IMD Quintiles Stratified
 ```{r}
 #------------------------------------------------------------------------------#
-# Partial F-test for p-value calculation
-
-# Subset to complete case dataset (for explanatory var)
-data_wide_imdfull <- data_wide[!is.na(area_imd_qt)]
-
-# Unadjusted model
-lm_wt_imd_unadj <- lm(wt_change_kg_06m ~ 1, data = data_wide_imdfull)
-summary(lm_wt_imd_unadj)
-
-# Unadjusted model
-lm_wt_imd_adj <- lm(wt_change_kg_06m ~ area_imd_qt, data = data_wide_imdfull)
-summary(lm_wt_imd_adj)
-
-# Partial F-test (nested model comparison)
-# H0: all age_cat5 coefficients = 0  (i.e., age_cat5 adds no explanatory power)
-anova(lm_wt_imd_unadj, lm_wt_imd_adj)
-
-# Extract patial F-test p-value
-pf_imd <- anova(lm_wt_imd_unadj, lm_wt_imd_adj)$`Pr(>F)`[2]
-pf_imd
-
-# Format p-value with custom function
-format_pval(pf_imd)
-
-
-#------------------------------------------------------------------------------#
 # Create mean line plot for 5 IMD groups
 
 # Calculate means by week + N patients contributing
@@ -4306,11 +5867,13 @@ mfig3b_imd_main <- ggplot(
     x = "Weeks Since GLP-1 Initiation",
     y = "Mean Weight Change (kg)",  # add separately in full figure
     title = "Stratified by IMD Quintiles",
-    subtitle = paste0("P for difference between IMD quintiles at 6 months: ", format_pval(pf_imd)),
+    subtitle = paste0("Unadjusted P Value for difference between IMD quintiles at 6 months: ", format_pval(pf_imd),
+                      "\nFDR-adj. P Value for difference between IMD quintiles at 6 months: ", format_pval(pf_fdr_imd)),
     colour = "IMD Quintile"
   ) +
   fig_theme +
   theme(
+    plot.subtitle = element_text(lineheight = 1.20)
     #axis.title.y = element_blank()
   ) +
   scale_x_continuous(breaks = seq(0, 26, by = 2)) +
@@ -4388,32 +5951,6 @@ plot(mfig3b_imd)
 c) Ethnicity Stratified
 ```{r}
 #------------------------------------------------------------------------------#
-# Partial F-test for p-value calculation
-
-# Subset to complete case dataset (for explanatory var)
-data_wide_ethfull <- data_wide[!is.na(eth_bin)]
-
-# Unadjusted model
-lm_wt_eth_unadj <- lm(wt_change_kg_06m ~ 1, data = data_wide_ethfull)
-summary(lm_wt_eth_unadj)
-
-# Unadjusted model
-lm_wt_eth_adj <- lm(wt_change_kg_06m ~ eth_bin, data = data_wide_ethfull)
-summary(lm_wt_eth_adj)
-
-# Partial F-test (nested model comparison)
-# H0: all age_cat5 coefficients = 0  (i.e., age_cat5 adds no explanatory power)
-anova(lm_wt_eth_unadj, lm_wt_eth_adj)
-
-# Extract patial F-test p-value
-pf_eth <- anova(lm_wt_eth_unadj, lm_wt_eth_adj)$`Pr(>F)`[2]
-pf_eth
-
-# Format p-value with custom function
-format_pval(pf_eth)
-
-
-#------------------------------------------------------------------------------#
 # Create mean line plot for 2 ethnicity groups
 
 # Calculate means by week + N patients contributing
@@ -4446,11 +5983,13 @@ mfig3c_eth_main <- ggplot(
     x = "Weeks Since GLP-1 Initiation",
     y = "Mean Weight Change (kg)",  # add separately in full figure
     title = "Stratified by Ethnicity",
-    subtitle = paste0("P for difference between ethnicity groups at 6 months: ", format_pval(pf_eth)),
+    subtitle = paste0("Unadjusted P Value for difference between ethnicity groups at 6 months: ", format_pval(pf_eth),
+                      "\nFDR-adj. P Value for difference between ethnicity groups at 6 months: ", format_pval(pf_fdr_eth)),
     colour = "Ethnicity"
   ) +
   fig_theme +
   theme(
+    plot.subtitle = element_text(lineheight = 1.20)
     #axis.title.y = element_blank()
   ) +
   scale_x_continuous(breaks = seq(0, 26, by = 2)) +
@@ -4520,32 +6059,6 @@ plot(mfig3c_eth)
 d) Starting Weight Group Stratified
 ```{r}
 #------------------------------------------------------------------------------#
-# Partial F-test for p-value calculation
-
-# Subset to complete case dataset (for explanatory var)
-data_wide_wtgrpfull <- data_wide[!is.na(wt_kg_0m_cat)]
-
-# Unadjusted model
-lm_wt_wtgrp_unadj <- lm(wt_change_kg_06m ~ 1, data = data_wide_wtgrpfull)
-summary(lm_wt_wtgrp_unadj)
-
-# Unadjusted model
-lm_wt_wtgrp_adj <- lm(wt_change_kg_06m ~ wt_kg_0m_cat, data = data_wide_wtgrpfull)
-summary(lm_wt_wtgrp_adj)
-
-# Partial F-test (nested model comparison)
-# H0: all age_cat5 coefficients = 0  (i.e., age_cat5 adds no explanatory power)
-anova(lm_wt_wtgrp_unadj, lm_wt_wtgrp_adj)
-
-# Extract patial F-test p-value
-pf_wtgrp <- anova(lm_wt_wtgrp_unadj, lm_wt_wtgrp_adj)$`Pr(>F)`[2]
-pf_wtgrp
-
-# Format p-value with custom function
-format_pval(pf_wtgrp)
-
-
-#------------------------------------------------------------------------------#
 # Create mean line plot for 5 baseline weight groups
 
 # Calculate mean by week + N patients contributing
@@ -4578,11 +6091,13 @@ mfig3d_wtgrp_main <- ggplot(
     x = "Weeks Since GLP-1 Initiation",
     y = "Mean Weight Change (kg)",  # add separately in full figure
     title = "Stratified by Baseline Weight",
-    subtitle = paste0("P for difference between baseline weight groups at 6 months: ", format_pval(pf_wtgrp)),
+    subtitle = paste0("Unadjusted P Value for difference between baseline weight groups at 6 months: ", format_pval(pf_wtgrp),
+                      "\nFDR-adj. P Value for difference between baseline weight groups at 6 months: ", format_pval(pf_fdr_wtgrp)),
     colour = "Baseline Weight"
   ) +
   fig_theme +
   theme(
+    plot.subtitle = element_text(lineheight = 1.20)
     #axis.title.y = element_blank()
   ) +
   scale_x_continuous(breaks = seq(0, 26, by = 2)) +
@@ -4715,901 +6230,392 @@ ggsave(
 
 
 ################################################################################ 
-# MFig4a. HbA1c change figure (diabetic evolution)
+# MFig4. HbA1c and Lipids Combined
 ################################################################################ 
 
-a) Waterfall Plot for HbA1c Change (Absolute)
-```{r}
-#----------------------------------------#
-# Waterfall plot: 6m-0m HbA1c change (Absolute)
-
-# Build change table (complete cases for HbA1c only)
-data_wf_hba1c_abs <- data_wide[
-  !is.na(blood_hba1c_mmolmol_0m) & !is.na(blood_hba1c_mmolmol_6m),
-  .(patid, val_0m = blood_hba1c_mmolmol_0m, val_6m = blood_hba1c_mmolmol_6m)
-][
-  is.finite(val_0m) & is.finite(val_6m)
-][
-  , val_change := val_6m - val_0m
-][
-  is.finite(val_change)
-]
-
-# Order patients from most decrease to most increase
-setorder(data_wf_hba1c_abs, val_change)
-data_wf_hba1c_abs[, order_id := seq_len(.N)]
-data_wf_hba1c_abs[, direction := fifelse(val_change < 0, "Decrease", "Increase or No Change")]
-
-# Boundary where change switches from - to +
-wf_boundary_x <- data_wf_hba1c_abs[val_change < 0, max(order_id, na.rm = TRUE)]
-wf_boundary_x <- if (is.finite(wf_boundary_x)) wf_boundary_x + 0.5 else NA_real_
-
-#-----------------------------#
-# Plot (absolute change)
-
-mfig4a_wf_hba1c_abs <- ggplot(data_wf_hba1c_abs, aes(x = order_id, y = val_change, fill = direction)) +
-  geom_col(width = 1, alpha = 0.75) +
-  geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.6) +
-  {if (is.finite(wf_boundary_x))
-    geom_vline(xintercept = wf_boundary_x, linetype = "dotted", linewidth = 0.6, colour = "black")} +
-  scale_fill_manual(
-    values = c(
-      "Decrease"              = "#0B2A5B",
-      "Increase or No Change" = "#04BFAF"
-    )
-  ) +
-  scale_x_continuous(
-    expand = c(0, 0),
-    breaks = function(x) {
-      rng <- range(x, na.rm = TRUE)
-      c(
-        rng[1],
-        round(rng[2] * 0.25),
-        round(rng[2] * 0.50),
-        round(rng[2] * 0.75),
-        rng[2]
-      )
-    },
-    labels = function(x) scales::comma(x)
-  ) +
-  labs(
-    x = "Patients (Ordered by HbA1c Change)",
-    y = "HbA1c (mmol/mol)",
-    title = "Change in HbA1c (mmol/mol)",
-    fill = NULL,
-  ) +
-  fig_theme +
-  theme(
-    axis.text.x = element_text(size = 9),
-    axis.ticks.x = element_line(),
-    panel.grid.major.x = element_blank(),
-    panel.grid.minor.x = element_blank(),
-    panel.background = element_rect(fill = "white", colour = NA),
-    plot.background  = element_rect(fill = "white", colour = NA)
-  )
-
-plot(mfig4a_wf_hba1c_abs)
-
-#-----------------------------#
-# Table
-
-# Create table
-mfig4a_tt <- rfig2_ttest_results[
-  measure == "HbA1c (mmol/mol)" &
-    subgroup == "Full Sample" & 
-    scale == "Absolute Change",
-  .(
-    N = n,
-    `Mean Change` = sprintf("%.2f", mean_change),
-    `95% CI` = paste0(
-      sprintf("%.2f", ci_low),
-      " to ",
-      sprintf("%.2f", ci_high)
-    ),
-    `P Value` = format_pval(p_value)
-  )
-]
-
-# Convert to grob table
-mfig4a_tt <- tableGrob(
-  mfig4a_tt,
-  rows = NULL,
-  theme = ttheme_minimal(
-    base_size = 11,
-
-    core = list(
-      fg_params = list(hjust = 0.5, x = 0.5),
-      bg_params = list(col = NA)
-    ),
-
-    colhead = list(
-      fg_params = list(hjust = 0.5, x = 0.5),
-      bg_params = list(col = NA)
-    )
-  )
-)
-
-# Add header line to grob table
-mfig4a_tt <- gtable::gtable_add_grob(
-  mfig4a_tt,
-  grobs = grid::segmentsGrob(
-    x0 = unit(0, "npc"),
-    x1 = unit(1, "npc"),
-    y0 = unit(0, "npc"),
-    y1 = unit(0, "npc"),
-    gp  = gpar(col = "grey60", lwd = 0.8)
-  ),
-  t = 1, b = 1, l = 1, r = ncol(mfig4a_tt)
-)
-
-# Create title grob
-title_grob <- grid::textGrob(
-  "Within-Person Mean Change Summary",
-  gp   = grid::gpar(fontsize = 11.5, fontface = "plain"),
-  just = c("left", "bottom"),
-  x    = grid::unit(0, "npc"),
-  y    = grid::unit(0.5, "npc")
-)
-
-# Create small row above the table and insert title
-mfig4a_tt <- gtable::gtable_add_rows(
-  mfig4a_tt,
-  heights = grid::unit(1.2, "lines"),
-  pos = 0
-)
-mfig4a_tt <- gtable::gtable_add_grob(
-  mfig4a_tt,
-  grobs = title_grob,
-  t = 1, l = 1, r = ncol(mfig4a_tt)
-)
-
-# Change grob table width
-mfig4a_tt$widths <- grid::unit(
-  c(0.15, 0.25, 0.35, 0.25),  # tweak as needed
-  "npc"
-)
-
-#-----------------------------#
-# Stack plot and table
-
-mfig4a_wf_hba1c_abs_tt <-
-  mfig4a_wf_hba1c_abs /
-  wrap_elements(mfig4a_tt) +
-  plot_layout(heights = c(3, 1))
-
-mfig4a_wf_hba1c_abs_tt
-
-```
-
-b) Waterfall Plot for HbA1c Change (Percentage)
-```{r}
-#----------------------------------------#
-# Waterfall plot: 6m-0m HbA1c change (Percentage)
-
-# Build change table (complete cases for HbA1c only)
-data_wf_hba1c_pct <- data_wide[
-  !is.na(blood_hba1c_mmolmol_0m) & !is.na(blood_hba1c_mmolmol_6m),
-  .(patid, val_0m = blood_hba1c_mmolmol_0m, val_6m = blood_hba1c_mmolmol_6m)
-][
-  is.finite(val_0m) & is.finite(val_6m)
-][
-  , val_change := 100 * (val_6m - val_0m) / val_0m
-][
-  is.finite(val_change)
-]
-
-# Order patients from most decrease to most increase
-setorder(data_wf_hba1c_pct, val_change)
-data_wf_hba1c_pct[, order_id := seq_len(.N)]
-data_wf_hba1c_pct[, direction := fifelse(val_change < 0, "Decrease", "Increase or No Change")]
-
-# Boundary where change switches from - to +
-wf_boundary_x <- data_wf_hba1c_pct[val_change < 0, max(order_id, na.rm = TRUE)]
-wf_boundary_x <- if (is.finite(wf_boundary_x)) wf_boundary_x + 0.5 else NA_real_
-
-#-----------------------------#
-# Plot (percentage change)
-
-mfig4b_wf_hba1c_pct <- ggplot(data_wf_hba1c_pct, aes(x = order_id, y = val_change, fill = direction)) +
-  geom_col(width = 1, alpha = 0.75) +
-  geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.6) +
-  {if (is.finite(wf_boundary_x))
-    geom_vline(xintercept = wf_boundary_x, linetype = "dotted", linewidth = 0.6, colour = "black")} +
-  scale_fill_manual(
-    values = c(
-      "Decrease"              = "#0B2A5B",
-      "Increase or No Change" = "#04BFAF"
-    )
-  ) +
-  scale_x_continuous(
-    expand = c(0, 0),
-    breaks = function(x) {
-      rng <- range(x, na.rm = TRUE)
-      c(
-        rng[1],
-        round(rng[2] * 0.25),
-        round(rng[2] * 0.50),
-        round(rng[2] * 0.75),
-        rng[2]
-      )
-    },
-    labels = function(x) scales::comma(x)
-  ) +
-  labs(
-    x = "Patients (Ordered by HbA1c Change)",
-    y = "HbA1c (mmol/mol)",
-    title = "Change in HbA1c (%)",
-    fill = NULL,
-  ) +
-  fig_theme +
-  theme(
-    axis.text.x = element_text(size = 9),
-    axis.ticks.x = element_line(),
-    panel.grid.major.x = element_blank(),
-    panel.grid.minor.x = element_blank(),
-    panel.background = element_rect(fill = "white", colour = NA),
-    plot.background  = element_rect(fill = "white", colour = NA)
-  )
-
-plot(mfig4b_wf_hba1c_pct)
-
-#-----------------------------#
-# Table
-
-# Create table
-mfig4b_tt <- rfig2_ttest_results[
-  measure == "HbA1c (mmol/mol)" &
-    subgroup == "Full Sample" & 
-    scale == "Percent Change",
-  .(
-    N = n,
-    `Mean Change` = sprintf("%.2f", mean_change),
-    `95% CI` = paste0(
-      sprintf("%.2f", ci_low),
-      " to ",
-      sprintf("%.2f", ci_high)
-    ),
-    `P Value` = format_pval(p_value)
-  )
-]
-
-# Convert to grob table
-mfig4b_tt <- tableGrob(
-  mfig4b_tt,
-  rows = NULL,
-  theme = ttheme_minimal(
-    base_size = 11,
-
-    core = list(
-      fg_params = list(hjust = 0.5, x = 0.5),
-      bg_params = list(col = NA)
-    ),
-
-    colhead = list(
-      fg_params = list(hjust = 0.5, x = 0.5),
-      bg_params = list(col = NA)
-    )
-  )
-)
-
-# Add header line to grob table
-mfig4b_tt <- gtable::gtable_add_grob(
-  mfig4b_tt,
-  grobs = grid::segmentsGrob(
-    x0 = unit(0, "npc"),
-    x1 = unit(1, "npc"),
-    y0 = unit(0, "npc"),
-    y1 = unit(0, "npc"),
-    gp  = gpar(col = "grey60", lwd = 0.8)
-  ),
-  t = 1, b = 1, l = 1, r = ncol(mfig4b_tt)
-)
-
-# Create title grob
-title_grob <- grid::textGrob(
-  "Within-Person Mean Change Summary",
-  gp   = grid::gpar(fontsize = 11.5, fontface = "plain"),
-  just = c("left", "bottom"),
-  x    = grid::unit(0, "npc"),
-  y    = grid::unit(0.5, "npc")
-)
-
-# Create small row above the table and insert title
-mfig4b_tt <- gtable::gtable_add_rows(
-  mfig4b_tt,
-  heights = grid::unit(1.2, "lines"),
-  pos = 0
-)
-mfig4b_tt <- gtable::gtable_add_grob(
-  mfig4b_tt,
-  grobs = title_grob,
-  t = 1, l = 1, r = ncol(mfig4b_tt)
-)
-
-# Change grob table width
-mfig4b_tt$widths <- grid::unit(
-  c(0.15, 0.25, 0.35, 0.25),  # tweak as needed
-  "npc"
-)
-
-#-----------------------------#
-# Stack plot and table
-
-mfig4b_wf_hba1c_pct_tt <-
-  mfig4b_wf_hba1c_pct /
-  wrap_elements(mfig4b_tt) +
-  plot_layout(heights = c(3, 1))
-
-mfig4b_wf_hba1c_pct_tt
-
-```
-
-c) Box and whisker plot for HbA1c Change (Diabetic)
-```{r}
-#-----------------------------#
-# Data Prep (Convert to long)
-
-box_long <- data_wide[
-  !is.na(hba1c_cat_0m) & !is.na(hba1c_cat_6m) &
-    hba1c_cat_0m == "Diabetic",
-  .(
-    patid,
-    `Baseline` = blood_hba1c_mmolmol_0m,
-    `6 months` = blood_hba1c_mmolmol_6m
-  )
-][
-  , melt(.SD,
-         id.vars       = "patid",
-         variable.name = "time",
-         value.name    = "hba1c")
-]
-
-#-----------------------------#
-# Automated title
-
-# % among those with complete-case HbA1c at 0m+6m:
-title_box_diab <- make_box_title(
-   dt = data_wide,
-   subgroup_filter = quote(!is.na(hba1c_cat_0m) & hba1c_cat_0m == "Diabetic" &
-                             !is.na(blood_hba1c_mmolmol_0m) & !is.na(blood_hba1c_mmolmol_6m)),
-   title_prefix = "Diabetic HbA1c at Baseline",
-   denom_filter = quote(!is.na(blood_hba1c_mmolmol_0m) & !is.na(blood_hba1c_mmolmol_6m)),
-   digits_pct = 1
- )
-
-#-----------------------------#
-# Plot
-
-mfig4c_box_diab <- ggplot(
-  box_long,
-  aes(x = time, y = hba1c, fill = time)
-) +
-  geom_boxplot(
-    width = 0.55,
-    alpha = 0.65,
-    outlier.alpha = 0.25,
-    linewidth = 0.6
-  ) +
-  stat_summary(
-    fun = median,
-    geom = "point",
-    size = 2.6,
-    colour = "black"
-  ) +
-  stat_summary(
-    fun = median,
-    geom = "line",
-    aes(group = 1),
-    linewidth = 0.8,
-    linetype = "dashed",
-    colour = "black"
-  ) +
-  scale_fill_manual(
-    values = c(
-      "Baseline" = "#0B2A5B",
-      "6 months" = "#04BFAF"
-    )
-  ) +
-  labs(
-    x = "Follow-up Period",
-    y = "HbA1c (mmol/mol)",
-    fill = NULL,
-    title = title_box_diab
-  ) +
-  fig_theme +
-  theme(
-    panel.background = element_rect(fill = "white", colour = NA),
-    plot.background  = element_rect(fill = "white", colour = NA),
-    axis.title.y     = element_text(margin = margin(r = 10)),
-    plot.title       = element_text(face = "plain"),
-    legend.position  = "none"
-  )
-
-plot(mfig4c_box_diab)
-
-#-----------------------------#
-# Table
-
-# Create table
-mfig4c_tt_diab <- rfig2_ttest_results[
-  measure == "HbA1c (mmol/mol)" &
-    subgroup == "Basline Diabetic (≥48 mmol/mol)" & 
-    scale == "Absolute Change",
-  .(
-    N = n,
-    `Mean Change` = sprintf("%.2f", mean_change),
-    `95% CI` = paste0(
-      sprintf("%.2f", ci_low),
-      " to ",
-      sprintf("%.2f", ci_high)
-    ),
-    `P Value` = format_pval(p_value)
-  )
-]
-
-# Convert to grob table
-mfig4c_tt_diab <- tableGrob(
-  mfig4c_tt_diab,
-  rows = NULL,
-  theme = ttheme_minimal(
-    base_size = 11,
-
-    core = list(
-      fg_params = list(hjust = 0.5, x = 0.5),
-      bg_params = list(col = NA)
-    ),
-
-    colhead = list(
-      fg_params = list(hjust = 0.5, x = 0.5),
-      bg_params = list(col = NA)
-    )
-  )
-)
-
-# Add header line to grob table
-mfig4c_tt_diab <- gtable::gtable_add_grob(
-  mfig4c_tt_diab,
-  grobs = grid::segmentsGrob(
-    x0 = unit(0, "npc"),
-    x1 = unit(1, "npc"),
-    y0 = unit(0, "npc"),
-    y1 = unit(0, "npc"),
-    gp  = gpar(col = "grey60", lwd = 0.8)
-  ),
-  t = 1, b = 1, l = 1, r = ncol(mfig4c_tt_diab)
-)
-
-# Create title grob
-title_grob <- grid::textGrob(
-  "Within-Person Mean Change Summary",
-  gp   = grid::gpar(fontsize = 11.5, fontface = "plain"),
-  just = c("left", "bottom"),
-  x    = grid::unit(0, "npc"),
-  y    = grid::unit(0.5, "npc")
-)
-
-# Create small row above the table and insert title
-mfig4c_tt_diab <- gtable::gtable_add_rows(
-  mfig4c_tt_diab,
-  heights = grid::unit(1.2, "lines"),
-  pos = 0
-)
-mfig4c_tt_diab <- gtable::gtable_add_grob(
-  mfig4c_tt_diab,
-  grobs = title_grob,
-  t = 1, l = 1, r = ncol(mfig4c_tt_diab)
-)
-
-# Change grob table width
-mfig4c_tt_diab$widths <- grid::unit(
-  c(0.15, 0.25, 0.35, 0.25),  # tweak as needed
-  "npc"
-)
-
-#-----------------------------#
-# Stack plot and table
-
-mfig4c_box_diab_tt <-
-  mfig4c_box_diab /
-  wrap_elements(mfig4c_tt_diab) +
-  plot_layout(heights = c(3, 1))
-
-mfig4c_box_diab_tt
-
-```
-
-d) Box and whisker plot for HbA1c Change (Pre-Diabetic)
-```{r}
-#-----------------------------#
-# Data Prep (Convert to long)
-
-box_long <- data_wide[
-  !is.na(hba1c_cat_0m) & !is.na(hba1c_cat_6m) &
-  hba1c_cat_0m == "Pre-Diabetic",
-  .(
-    patid,
-    `Baseline` = blood_hba1c_mmolmol_0m,
-    `6 months` = blood_hba1c_mmolmol_6m
-  )
-][
-  , melt(.SD,
-         id.vars       = "patid",
-         variable.name = "time",
-         value.name    = "hba1c")
-]
-
-#-----------------------------#
-# Automated title
-
-# % among those with complete-case HbA1c at 0m+6m:
-title_box_pdiab <- make_box_title(
-   dt = data_wide,
-   subgroup_filter = quote(!is.na(hba1c_cat_0m) & hba1c_cat_0m == "Pre-Diabetic" &
-                             !is.na(blood_hba1c_mmolmol_0m) & !is.na(blood_hba1c_mmolmol_6m)),
-   title_prefix = "Pre-Diabetic HbA1c at Baseline",
-   denom_filter = quote(!is.na(blood_hba1c_mmolmol_0m) & !is.na(blood_hba1c_mmolmol_6m)),
-   digits_pct = 1
- )
-
-#-----------------------------#
-# Plot
-
-mfig4d_box_pdiab <- ggplot(
-  box_long,
-  aes(x = time, y = hba1c, fill = time)
-) +
-  geom_boxplot(
-    width = 0.55,
-    alpha = 0.65,
-    outlier.alpha = 0.25,
-    linewidth = 0.6
-  ) +
-  stat_summary(
-    fun = median,
-    geom = "point",
-    size = 2.6,
-    colour = "black"
-  ) +
-  stat_summary(
-    fun = median,
-    geom = "line",
-    aes(group = 1),
-    linewidth = 0.8,
-    linetype = "dashed",
-    colour = "black"
-  ) +
-  scale_fill_manual(
-    values = c(
-      "Baseline" = "#0B2A5B",
-      "6 months" = "#04BFAF"
-    )
-  ) +
-  labs(
-    x = "Follow-up Period",
-    y = "HbA1c (mmol/mol)",
-    fill = NULL,
-    title = title_box_pdiab
-  ) +
-  fig_theme +
-  theme(
-    panel.background = element_rect(fill = "white", colour = NA),
-    plot.background  = element_rect(fill = "white", colour = NA),
-    axis.title.y     = element_text(margin = margin(r = 10)),
-    plot.title       = element_text(face = "plain"),
-    legend.position  = "none"
-  )
-
-plot(mfig4d_box_pdiab)
-
-#-----------------------------#
-# Table
-
-# Create table
-mfig4d_tt_pdiab <- rfig2_ttest_results[
-  measure == "HbA1c (mmol/mol)" &
-    subgroup == "Baseline Pre-diabetic (42–47 mmol/mol)" & 
-    scale == "Absolute Change",
-  .(
-    N = n,
-    `Mean Change` = sprintf("%.2f", mean_change),
-    `95% CI` = paste0(
-      sprintf("%.2f", ci_low),
-      " to ",
-      sprintf("%.2f", ci_high)
-    ),
-    `P Value` = format_pval(p_value)
-  )
-]
-
-# Convert to grob table
-mfig4d_tt_pdiab <- tableGrob(
-  mfig4d_tt_pdiab,
-  rows = NULL,
-  theme = ttheme_minimal(
-    base_size = 11,
-
-    core = list(
-      fg_params = list(hjust = 0.5, x = 0.5),
-      bg_params = list(col = NA)
-    ),
-
-    colhead = list(
-      fg_params = list(hjust = 0.5, x = 0.5),
-      bg_params = list(col = NA)
-    )
-  )
-)
-
-# Add header line to grob table
-mfig4d_tt_pdiab <- gtable::gtable_add_grob(
-  mfig4d_tt_pdiab,
-  grobs = grid::segmentsGrob(
-    x0 = unit(0, "npc"),
-    x1 = unit(1, "npc"),
-    y0 = unit(0, "npc"),
-    y1 = unit(0, "npc"),
-    gp  = gpar(col = "grey60", lwd = 0.8)
-  ),
-  t = 1, b = 1, l = 1, r = ncol(mfig4d_tt_pdiab)
-)
-
-# Create title grob
-title_grob <- grid::textGrob(
-  "Within-Person Mean Change Summary",
-  gp   = grid::gpar(fontsize = 11.5, fontface = "plain"),
-  just = c("left", "bottom"),
-  x    = grid::unit(0, "npc"),
-  y    = grid::unit(0.5, "npc")
-)
-
-# Create small row above the table and insert title
-mfig4d_tt_pdiab <- gtable::gtable_add_rows(
-  mfig4d_tt_pdiab,
-  heights = grid::unit(1.2, "lines"),
-  pos = 0
-)
-mfig4d_tt_pdiab <- gtable::gtable_add_grob(
-  mfig4d_tt_pdiab,
-  grobs = title_grob,
-  t = 1, l = 1, r = ncol(mfig4d_tt_pdiab)
-)
-
-# Change grob table width
-mfig4d_tt_pdiab$widths <- grid::unit(
-  c(0.15, 0.25, 0.35, 0.25),  # tweak as needed
-  "npc"
-)
-
-#-----------------------------#
-# Stack plot and table
-
-mfig4d_box_pdiab_tt <-
-  mfig4d_box_pdiab /
-  wrap_elements(mfig4d_tt_pdiab) +
-  plot_layout(heights = c(3, 1))
-
-mfig4d_box_pdiab_tt
-
-```
-
-e) Box and whisker plot for HbA1c Change (Normal)
-```{r}
-#-----------------------------#
-# Data Prep (Convert to long)
-
-box_long <- data_wide[
-  !is.na(hba1c_cat_0m) & !is.na(hba1c_cat_6m) &
-  hba1c_cat_0m == "Normal",
-  .(
-    patid,
-    `Baseline` = blood_hba1c_mmolmol_0m,
-    `6 months` = blood_hba1c_mmolmol_6m
-  )
-][
-  , melt(.SD,
-         id.vars       = "patid",
-         variable.name = "time",
-         value.name    = "hba1c")
-]
-
-#-----------------------------#
-# Automated title
-
-# % among those with complete-case HbA1c at 0m+6m:
-title_box_norm <- make_box_title(
-   dt = data_wide,
-   subgroup_filter = quote(!is.na(hba1c_cat_0m) & hba1c_cat_0m == "Normal" &
-                             !is.na(blood_hba1c_mmolmol_0m) & !is.na(blood_hba1c_mmolmol_6m)),
-   title_prefix = "Normal HbA1c at Baseline",
-   denom_filter = quote(!is.na(blood_hba1c_mmolmol_0m) & !is.na(blood_hba1c_mmolmol_6m)),
-   digits_pct = 1
- )
-
-#-----------------------------#
-# Plot
-
-mfig4e_box_norm <- ggplot(
-  box_long,
-  aes(x = time, y = hba1c, fill = time)
-) +
-  geom_boxplot(
-    width = 0.55,
-    alpha = 0.65,
-    outlier.alpha = 0.25,
-    linewidth = 0.6
-  ) +
-  stat_summary(
-    fun = median,
-    geom = "point",
-    size = 2.6,
-    colour = "black"
-  ) +
-  stat_summary(
-    fun = median,
-    geom = "line",
-    aes(group = 1),
-    linewidth = 0.8,
-    linetype = "dashed",
-    colour = "black"
-  ) +
-  scale_fill_manual(
-    values = c(
-      "Baseline" = "#0B2A5B",
-      "6 months" = "#04BFAF"
-    )
-  ) +
-  labs(
-    x = "Follow-up Period",
-    y = "HbA1c (mmol/mol)",
-    fill = NULL,
-    title = title_box_norm
-  ) +
-  fig_theme +
-  theme(
-    panel.background = element_rect(fill = "white", colour = NA),
-    plot.background  = element_rect(fill = "white", colour = NA),
-    axis.title.y     = element_text(margin = margin(r = 10)),
-    plot.title       = element_text(face = "plain"),
-    legend.position  = "none"
-  )
-
-plot(mfig4e_box_norm)
-
-#-----------------------------#
-# Table
-
-# Create table
-mfig4e_tt_norm <- rfig2_ttest_results[
-  measure == "HbA1c (mmol/mol)" &
-    subgroup == "Baseline Normal (<42 mmol/mol)" & 
-    scale == "Absolute Change",
-  .(
-    N = n,
-    `Mean Change` = sprintf("%.2f", mean_change),
-    `95% CI` = paste0(
-      sprintf("%.2f", ci_low),
-      " to ",
-      sprintf("%.2f", ci_high)
-    ),
-    `P Value` = format_pval(p_value)
-  )
-]
-
-# Convert to grob table
-mfig4e_tt_norm <- tableGrob(
-  mfig4e_tt_norm,
-  rows = NULL,
-  theme = ttheme_minimal(
-    base_size = 11,
-
-    core = list(
-      fg_params = list(hjust = 0.5, x = 0.5),
-      bg_params = list(col = NA)
-    ),
-
-    colhead = list(
-      fg_params = list(hjust = 0.5, x = 0.5),
-      bg_params = list(col = NA)
-    )
-  )
-)
-
-# Add header line to grob table
-mfig4e_tt_norm <- gtable::gtable_add_grob(
-  mfig4e_tt_norm,
-  grobs = grid::segmentsGrob(
-    x0 = unit(0, "npc"),
-    x1 = unit(1, "npc"),
-    y0 = unit(0, "npc"),
-    y1 = unit(0, "npc"),
-    gp  = gpar(col = "grey60", lwd = 0.8)
-  ),
-  t = 1, b = 1, l = 1, r = ncol(mfig4e_tt_norm)
-)
-
-# Create title grob
-title_grob <- grid::textGrob(
-  "Within-Person Mean Change Summary",
-  gp   = grid::gpar(fontsize = 11.5, fontface = "plain"),
-  just = c("left", "bottom"),
-  x    = grid::unit(0, "npc"),
-  y    = grid::unit(0.5, "npc")
-)
-
-# Create small row above the table and insert title
-mfig4e_tt_norm <- gtable::gtable_add_rows(
-  mfig4e_tt_norm,
-  heights = grid::unit(1.2, "lines"),
-  pos = 0
-)
-mfig4e_tt_norm <- gtable::gtable_add_grob(
-  mfig4e_tt_norm,
-  grobs = title_grob,
-  t = 1, l = 1, r = ncol(mfig4e_tt_norm)
-)
-
-# Change grob table width
-mfig4e_tt_norm$widths <- grid::unit(
-  c(0.15, 0.25, 0.35, 0.25),  # tweak as needed
-  "npc"
-)
-
-#-----------------------------#
-# Stack plot and table
-
-mfig4e_box_norm_tt <-
-  mfig4e_box_norm /
-  wrap_elements(mfig4e_tt_norm) +
-  plot_layout(heights = c(3, 1))
-
-mfig4e_box_norm_tt
-
-```
-
-f) Combine into one plot
+Note 1: 
+For p-values, the FDR adjustment has been applied using two related families:
+(i.e. FDR for 6x blood measure comparison, then FDR for 3x HbA1c baseline category comparison)
+
+Note 2:
+- Paired t-tests are run using complete paired baseline and 6-month values.
+- The 6 main blood measure tests are treated as one family:
+  HbA1c (abs), HbA1c (%), Total Cholesterol, HDL, LDL, and Triglycerides.
+- The diabetic, pre-diabetic, and normal baseline HbA1c category tests are treated
+  as one family, with Benjamini-Hochberg FDR correction applied across the 3 p-values.
+- Confidence intervals are presented without multiplicity adjustment.
+
+a) Perform paired t-tests
 ```{r}
 #------------------------------------------------------------------------------#
-# Combine five plots
+# Perform paired t-tests for 6 blood measures
 
-mfig4_hba1c <- 
-  (mfig4a_wf_hba1c_abs_tt | mfig4b_wf_hba1c_pct_tt) /
-  plot_spacer() /
-  (mfig4c_box_diab_tt | mfig4d_box_pdiab_tt | mfig4e_box_norm_tt) +
-  plot_annotation(
-    theme = theme(
-      #title = "Change in HbA1c Levels from Baseline to 6 Month Follow-up",
-      plot.title = element_text(
-        size = 16,
-        margin = margin(b = 14)
-      )
-    )
-  ) +
-  plot_layout(heights = c(1, 0.05, 1))
+#-------------------------------#
+# Overall HbA1c absolute change
 
-plot(mfig4_hba1c)
+data_hba1c_pair <- data_wide[
+  !is.na(blood_hba1c_mmolmol_0m) &
+    !is.na(blood_hba1c_mmolmol_6m)
+]
+
+data_hba1c_pair[
+  ,
+  hba1c_change_mmolmol := blood_hba1c_mmolmol_6m - blood_hba1c_mmolmol_0m
+]
+
+tt_hba1c_abs <- t.test(
+  data_hba1c_pair$hba1c_change_mmolmol,
+  mu = 0
+)
+
+#-------------------------------#
+# Overall HbA1c percent change
+
+data_hba1c_pair[
+  ,
+  hba1c_change_pct := (
+    (blood_hba1c_mmolmol_6m - blood_hba1c_mmolmol_0m) /
+      blood_hba1c_mmolmol_0m
+  ) * 100
+]
+
+tt_hba1c_pct <- t.test(
+  data_hba1c_pair$hba1c_change_pct,
+  mu = 0
+)
+
+#-------------------------------#
+# Total cholesterol absolute change
+
+data_tc_pair <- data_wide[
+  !is.na(blood_chol_mmoll_0m) &
+    !is.na(blood_chol_mmoll_6m)
+]
+
+data_tc_pair[
+  ,
+  tc_change_mmoll := blood_chol_mmoll_6m - blood_chol_mmoll_0m
+]
+
+tt_tc_abs <- t.test(
+  data_tc_pair$tc_change_mmoll,
+  mu = 0
+)
+
+#-------------------------------#
+# HDL absolute change
+
+data_hdl_pair <- data_wide[
+  !is.na(blood_hdl_mmoll_0m) &
+    !is.na(blood_hdl_mmoll_6m)
+]
+
+data_hdl_pair[
+  ,
+  hdl_change_mmoll := blood_hdl_mmoll_6m - blood_hdl_mmoll_0m
+]
+
+tt_hdl_abs <- t.test(
+  data_hdl_pair$hdl_change_mmoll,
+  mu = 0
+)
+
+#-------------------------------#
+# LDL absolute change
+
+data_ldl_pair <- data_wide[
+  !is.na(blood_ldl_mmoll_0m) &
+    !is.na(blood_ldl_mmoll_6m)
+]
+
+data_ldl_pair[
+  ,
+  ldl_change_mmoll := blood_ldl_mmoll_6m - blood_ldl_mmoll_0m
+]
+
+tt_ldl_abs <- t.test(
+  data_ldl_pair$ldl_change_mmoll,
+  mu = 0
+)
+
+#-------------------------------#
+# Triglycerides absolute change
+
+data_tg_pair <- data_wide[
+  !is.na(blood_tg_mmoll_0m) &
+    !is.na(blood_tg_mmoll_6m)
+]
+
+data_tg_pair[
+  ,
+  tg_change_mmoll := blood_tg_mmoll_6m - blood_tg_mmoll_0m
+]
+
+tt_tg_abs <- t.test(
+  data_tg_pair$tg_change_mmoll,
+  mu = 0
+)
+
+
+#-------------------------------#
+# FDR adjustment across the 6 main blood measure panels
+
+mfig4_blood_p_raw <- c(
+  tt_hba1c_abs$p.value,
+  tt_hba1c_pct$p.value,
+  tt_tc_abs$p.value,
+  tt_hdl_abs$p.value,
+  tt_ldl_abs$p.value,
+  tt_tg_abs$p.value
+)
+
+mfig4_blood_p_fdr <- p.adjust(
+  mfig4_blood_p_raw,
+  method = "BH"
+)
+
+pf_fdr_hba1c_abs <- mfig4_blood_p_fdr[1]
+pf_fdr_hba1c_pct <- mfig4_blood_p_fdr[2]
+pf_fdr_tc_abs    <- mfig4_blood_p_fdr[3]
+pf_fdr_hdl_abs   <- mfig4_blood_p_fdr[4]
+pf_fdr_ldl_abs   <- mfig4_blood_p_fdr[5]
+pf_fdr_tg_abs    <- mfig4_blood_p_fdr[6]
+
+
+#-------------------------------#
+# Create blood measure t-test table for checking and figure tables
+
+mfig4_blood_ttest_tbl <- data.table(
+  comparison = c(
+    "Overall HbA1c absolute change",
+    "Overall HbA1c percent change",
+    "Total cholesterol absolute change",
+    "HDL absolute change",
+    "LDL absolute change",
+    "Triglycerides absolute change"
+  ),
+  n = c(
+    nrow(data_hba1c_pair),
+    nrow(data_hba1c_pair),
+    nrow(data_tc_pair),
+    nrow(data_hdl_pair),
+    nrow(data_ldl_pair),
+    nrow(data_tg_pair)
+  ),
+  mean_change = c(
+    mean(data_hba1c_pair$hba1c_change_mmolmol, na.rm = TRUE),
+    mean(data_hba1c_pair$hba1c_change_pct, na.rm = TRUE),
+    mean(data_tc_pair$tc_change_mmoll, na.rm = TRUE),
+    mean(data_hdl_pair$hdl_change_mmoll, na.rm = TRUE),
+    mean(data_ldl_pair$ldl_change_mmoll, na.rm = TRUE),
+    mean(data_tg_pair$tg_change_mmoll, na.rm = TRUE)
+  ),
+  ci_low = c(
+    tt_hba1c_abs$conf.int[1],
+    tt_hba1c_pct$conf.int[1],
+    tt_tc_abs$conf.int[1],
+    tt_hdl_abs$conf.int[1],
+    tt_ldl_abs$conf.int[1],
+    tt_tg_abs$conf.int[1]
+  ),
+  ci_high = c(
+    tt_hba1c_abs$conf.int[2],
+    tt_hba1c_pct$conf.int[2],
+    tt_tc_abs$conf.int[2],
+    tt_hdl_abs$conf.int[2],
+    tt_ldl_abs$conf.int[2],
+    tt_tg_abs$conf.int[2]
+  ),
+  p_raw = mfig4_blood_p_raw,
+  p_fdr = mfig4_blood_p_fdr
+)
+
+mfig4_blood_ttest_tbl[
+  ,
+  `:=`(
+    mean_change = round(mean_change, 2),
+    ci_low = round(ci_low, 2),
+    ci_high = round(ci_high, 2),
+    p_raw_fmt = sapply(p_raw, format_pval),
+    p_fdr_fmt = sapply(p_fdr, format_pval)
+  )
+]
+
+print(mfig4_blood_ttest_tbl)
 
 
 #------------------------------------------------------------------------------#
-# Export plot
+# Perform HbA1c category-specific paired t-tests
 
-ggsave(
-  mfig4_hba1c, 
-  filename = "Final Outputs/mfig4extra-hba1c.png",
-  width = 18, height = 12, dpi = 300
+#-------------------------------#
+# HbA1c absolute change by baseline HbA1c category
+
+data_hba1c_diab <- data_hba1c_pair[
+  !is.na(hba1c_cat_0m) & hba1c_cat_0m == "Diabetic"
+]
+
+data_hba1c_pdiab <- data_hba1c_pair[
+  !is.na(hba1c_cat_0m) & hba1c_cat_0m == "Pre-Diabetic"
+]
+
+data_hba1c_norm <- data_hba1c_pair[
+  !is.na(hba1c_cat_0m) & hba1c_cat_0m == "Normal"
+]
+
+tt_hba1c_diab <- t.test(
+  data_hba1c_diab$hba1c_change_mmolmol,
+  mu = 0
 )
 
+tt_hba1c_pdiab <- t.test(
+  data_hba1c_pdiab$hba1c_change_mmolmol,
+  mu = 0
+)
+
+tt_hba1c_norm <- t.test(
+  data_hba1c_norm$hba1c_change_mmolmol,
+  mu = 0
+)
+
+
+#-------------------------------#
+# FDR adjustment across the 3 HbA1c category-specific tests
+
+mfig4_hba1c_cat_p_raw <- c(
+  tt_hba1c_diab$p.value,
+  tt_hba1c_pdiab$p.value,
+  tt_hba1c_norm$p.value
+)
+
+mfig4_hba1c_cat_p_fdr <- p.adjust(
+  mfig4_hba1c_cat_p_raw,
+  method = "BH"
+)
+
+pf_fdr_hba1c_diab  <- mfig4_hba1c_cat_p_fdr[1]
+pf_fdr_hba1c_pdiab <- mfig4_hba1c_cat_p_fdr[2]
+pf_fdr_hba1c_norm  <- mfig4_hba1c_cat_p_fdr[3]
+
+
+#-------------------------------#
+# Create HbA1c category t-test table for checking and figure tables
+
+mfig4_hba1c_cat_ttest_tbl <- data.table(
+  comparison = c(
+    "Baseline diabetic HbA1c group",
+    "Baseline pre-diabetic HbA1c group",
+    "Baseline normal HbA1c group"
+  ),
+  n = c(
+    nrow(data_hba1c_diab),
+    nrow(data_hba1c_pdiab),
+    nrow(data_hba1c_norm)
+  ),
+  mean_change = c(
+    mean(data_hba1c_diab$hba1c_change_mmolmol, na.rm = TRUE),
+    mean(data_hba1c_pdiab$hba1c_change_mmolmol, na.rm = TRUE),
+    mean(data_hba1c_norm$hba1c_change_mmolmol, na.rm = TRUE)
+  ),
+  ci_low = c(
+    tt_hba1c_diab$conf.int[1],
+    tt_hba1c_pdiab$conf.int[1],
+    tt_hba1c_norm$conf.int[1]
+  ),
+  ci_high = c(
+    tt_hba1c_diab$conf.int[2],
+    tt_hba1c_pdiab$conf.int[2],
+    tt_hba1c_norm$conf.int[2]
+  ),
+  p_raw = mfig4_hba1c_cat_p_raw,
+  p_fdr = mfig4_hba1c_cat_p_fdr
+)
+
+mfig4_hba1c_cat_ttest_tbl[
+  ,
+  `:=`(
+    mean_change = round(mean_change, 2),
+    ci_low = round(ci_low, 2),
+    ci_high = round(ci_high, 2),
+    p_raw_fmt = sapply(p_raw, format_pval),
+    p_fdr_fmt = sapply(p_fdr, format_pval)
+  )
+]
+
+print(mfig4_hba1c_cat_ttest_tbl)
 ```
 
-
-
-################################################################################ 
-# MFig4b. Biochemistry lipid change waterfall plots
-################################################################################ 
-
-a) Waterfall Plot for total cholesterol change (Absolute)
+b) Construct individual panels
 ```{r}
-#----------------------------------------#
-# Waterfall plot: 6m-0m TC change (Absolute)
+#------------------------------------------------------------------------------#
+# Create helper function for table grobs
+
+make_mfig4_table_grob <- function(tab_dt, col_widths = c(0.11, 0.18, 0.22, 0.23, 0.26)) {
+  
+  # Convert to grob table
+  tab_grob <- tableGrob(
+    tab_dt,
+    rows = NULL,
+    theme = ttheme_minimal(
+      base_size = 11,
+      
+      core = list(
+        fg_params = list(hjust = 0.5, x = 0.5),
+        bg_params = list(col = NA)
+      ),
+      
+      colhead = list(
+        fg_params = list(hjust = 0.5, x = 0.5),
+        bg_params = list(col = NA)
+      )
+    )
+  )
+  
+  # Add header line to grob table
+  tab_grob <- gtable::gtable_add_grob(
+    tab_grob,
+    grobs = grid::segmentsGrob(
+      x0 = unit(0, "npc"),
+      x1 = unit(1, "npc"),
+      y0 = unit(0, "npc"),
+      y1 = unit(0, "npc"),
+      gp  = gpar(col = "grey60", lwd = 0.8)
+    ),
+    t = 1, b = 1, l = 1, r = ncol(tab_grob)
+  )
+  
+  # Create title grob
+  title_grob <- grid::textGrob(
+    "Within-Person Mean Change Summary",
+    gp   = grid::gpar(fontsize = 11.5, fontface = "plain"),
+    just = c("left", "bottom"),
+    x    = grid::unit(0, "npc"),
+    y    = grid::unit(0.5, "npc")
+  )
+  
+  # Create small row above the table and insert title
+  tab_grob <- gtable::gtable_add_rows(
+    tab_grob,
+    heights = grid::unit(1.2, "lines"),
+    pos = 0
+  )
+  tab_grob <- gtable::gtable_add_grob(
+    tab_grob,
+    grobs = title_grob,
+    t = 1, l = 1, r = ncol(tab_grob)
+  )
+  
+  # Change grob table width
+  tab_grob$widths <- grid::unit(
+    col_widths,
+    "npc"
+  )
+  
+  return(tab_grob)
+}
+
+
+#------------------------------------------------------------------------------#
+# Total cholesterol waterfall plot
 
 # Build change table (complete cases for TC only)
 data_wf_tc_abs <- data_wide[
@@ -5632,10 +6638,8 @@ data_wf_tc_abs[, direction := fifelse(val_change < 0, "Decrease", "Increase or N
 wf_boundary_x <- data_wf_tc_abs[val_change < 0, max(order_id, na.rm = TRUE)]
 wf_boundary_x <- if (is.finite(wf_boundary_x)) wf_boundary_x + 0.5 else NA_real_
 
-#-----------------------------#
 # Plot
-
-mfig4a_wf_tc_abs <- ggplot(data_wf_tc_abs, aes(x = order_id, y = val_change, fill = direction)) +
+mfig4wf_chol <- ggplot(data_wf_tc_abs, aes(x = order_id, y = val_change, fill = direction)) +
   geom_col(width = 1, alpha = 0.75) +
   geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.6) +
   {if (is.finite(wf_boundary_x))
@@ -5650,13 +6654,7 @@ mfig4a_wf_tc_abs <- ggplot(data_wf_tc_abs, aes(x = order_id, y = val_change, fil
     expand = c(0, 0),
     breaks = function(x) {
       rng <- range(x, na.rm = TRUE)
-      c(
-        rng[1],
-        round(rng[2] * 0.25),
-        round(rng[2] * 0.50),
-        round(rng[2] * 0.75),
-        rng[2]
-      )
+      c(rng[1], round(rng[2] * 0.25), round(rng[2] * 0.50), round(rng[2] * 0.75), rng[2])
     },
     labels = function(x) scales::comma(x)
   ) +
@@ -5676,103 +6674,29 @@ mfig4a_wf_tc_abs <- ggplot(data_wf_tc_abs, aes(x = order_id, y = val_change, fil
     plot.background  = element_rect(fill = "white", colour = NA)
   )
 
-plot(mfig4a_wf_tc_abs)
-
-#-----------------------------#
-# Table
-
 # Create table
-mfig4a_tt <- rfig2_ttest_results[
-  measure == "Total Cholesterol (mmol/L)" &
-    subgroup == "Full Sample" & 
-    scale == "Absolute Change",
+mfig4wf_chol_tt <- mfig4_blood_ttest_tbl[
+  comparison == "Total cholesterol absolute change",
   .(
     N = n,
     `Mean Change` = sprintf("%.2f", mean_change),
-    `95% CI` = paste0(
-      sprintf("%.2f", ci_low),
-      " to ",
-      sprintf("%.2f", ci_high)
-    ),
-    `P Value` = format_pval(p_value)
+    `95% CI` = paste0(sprintf("%.2f", ci_low), " to ", sprintf("%.2f", ci_high)),
+    `Unadj. P Value` = format_pval(p_raw),
+    `FDR-adj. P Value` = format_pval(p_fdr)
   )
 ]
 
-# Convert to grob table
-mfig4a_tt <- tableGrob(
-  mfig4a_tt,
-  rows = NULL,
-  theme = ttheme_minimal(
-    base_size = 11,
+mfig4wf_chol_tt <- make_mfig4_table_grob(mfig4wf_chol_tt)
 
-    core = list(
-      fg_params = list(hjust = 0.5, x = 0.5),
-      bg_params = list(col = NA)
-    ),
-
-    colhead = list(
-      fg_params = list(hjust = 0.5, x = 0.5),
-      bg_params = list(col = NA)
-    )
-  )
-)
-
-# Add header line to grob table
-mfig4a_tt <- gtable::gtable_add_grob(
-  mfig4a_tt,
-  grobs = grid::segmentsGrob(
-    x0 = unit(0, "npc"),
-    x1 = unit(1, "npc"),
-    y0 = unit(0, "npc"),
-    y1 = unit(0, "npc"),
-    gp  = gpar(col = "grey60", lwd = 0.8)
-  ),
-  t = 1, b = 1, l = 1, r = ncol(mfig4a_tt)
-)
-
-# Create title grob
-title_grob <- grid::textGrob(
-  "Within-Person Mean Change Summary",
-  gp   = grid::gpar(fontsize = 11.5, fontface = "plain"),
-  just = c("left", "bottom"),
-  x    = grid::unit(0, "npc"),
-  y    = grid::unit(0.5, "npc")
-)
-
-# Create small row above the table and insert title
-mfig4a_tt <- gtable::gtable_add_rows(
-  mfig4a_tt,
-  heights = grid::unit(1.2, "lines"),
-  pos = 0
-)
-mfig4a_tt <- gtable::gtable_add_grob(
-  mfig4a_tt,
-  grobs = title_grob,
-  t = 1, l = 1, r = ncol(mfig4a_tt)
-)
-
-# Change grob table width
-mfig4a_tt$widths <- grid::unit(
-  c(0.15, 0.25, 0.35, 0.25),  # tweak as needed
-  "npc"
-)
-
-#-----------------------------#
 # Stack plot and table
-
-mfig4a_wf_tc_abs_tt <-
-  mfig4a_wf_tc_abs /
-  wrap_elements(mfig4a_tt) +
+mfig4wf_chol_tt <-
+  mfig4wf_chol /
+  wrap_elements(mfig4wf_chol_tt) +
   plot_layout(heights = c(3, 1))
 
-mfig4a_wf_tc_abs_tt
 
-```
-
-b) Waterfall Plot for HDL change (Absolute)
-```{r}
-#----------------------------------------#
-# Waterfall plot: 6m-0m HDL change (Absolute)
+#------------------------------------------------------------------------------#
+# HDL waterfall plot
 
 # Build change table (complete cases for HDL only)
 data_wf_hdl_abs <- data_wide[
@@ -5795,10 +6719,8 @@ data_wf_hdl_abs[, direction := fifelse(val_change < 0, "Decrease", "Increase or 
 wf_boundary_x <- data_wf_hdl_abs[val_change < 0, max(order_id, na.rm = TRUE)]
 wf_boundary_x <- if (is.finite(wf_boundary_x)) wf_boundary_x + 0.5 else NA_real_
 
-#-----------------------------#
 # Plot
-
-mfig4b_wf_hdl_abs <- ggplot(data_wf_hdl_abs, aes(x = order_id, y = val_change, fill = direction)) +
+mfig4wf_hdl <- ggplot(data_wf_hdl_abs, aes(x = order_id, y = val_change, fill = direction)) +
   geom_col(width = 1, alpha = 0.75) +
   geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.6) +
   {if (is.finite(wf_boundary_x))
@@ -5813,13 +6735,7 @@ mfig4b_wf_hdl_abs <- ggplot(data_wf_hdl_abs, aes(x = order_id, y = val_change, f
     expand = c(0, 0),
     breaks = function(x) {
       rng <- range(x, na.rm = TRUE)
-      c(
-        rng[1],
-        round(rng[2] * 0.25),
-        round(rng[2] * 0.50),
-        round(rng[2] * 0.75),
-        rng[2]
-      )
+      c(rng[1], round(rng[2] * 0.25), round(rng[2] * 0.50), round(rng[2] * 0.75), rng[2])
     },
     labels = function(x) scales::comma(x)
   ) +
@@ -5839,103 +6755,29 @@ mfig4b_wf_hdl_abs <- ggplot(data_wf_hdl_abs, aes(x = order_id, y = val_change, f
     plot.background  = element_rect(fill = "white", colour = NA)
   )
 
-plot(mfig4b_wf_hdl_abs)
-
-#-----------------------------#
-# Table
-
 # Create table
-mfig4b_tt <- rfig2_ttest_results[
-  measure == "HDL (mmol/L)" &
-    subgroup == "Full Sample" & 
-    scale == "Absolute Change",
+mfig4wf_hdl_tt <- mfig4_blood_ttest_tbl[
+  comparison == "HDL absolute change",
   .(
     N = n,
     `Mean Change` = sprintf("%.2f", mean_change),
-    `95% CI` = paste0(
-      sprintf("%.2f", ci_low),
-      " to ",
-      sprintf("%.2f", ci_high)
-    ),
-    `P Value` = format_pval(p_value)
+    `95% CI` = paste0(sprintf("%.2f", ci_low), " to ", sprintf("%.2f", ci_high)),
+    `Unadj. P Value` = format_pval(p_raw),
+    `FDR-adj. P Value` = format_pval(p_fdr)
   )
 ]
 
-# Convert to grob table
-mfig4b_tt <- tableGrob(
-  mfig4b_tt,
-  rows = NULL,
-  theme = ttheme_minimal(
-    base_size = 11,
+mfig4wf_hdl_tt <- make_mfig4_table_grob(mfig4wf_hdl_tt)
 
-    core = list(
-      fg_params = list(hjust = 0.5, x = 0.5),
-      bg_params = list(col = NA)
-    ),
-
-    colhead = list(
-      fg_params = list(hjust = 0.5, x = 0.5),
-      bg_params = list(col = NA)
-    )
-  )
-)
-
-# Add header line to grob table
-mfig4b_tt <- gtable::gtable_add_grob(
-  mfig4b_tt,
-  grobs = grid::segmentsGrob(
-    x0 = unit(0, "npc"),
-    x1 = unit(1, "npc"),
-    y0 = unit(0, "npc"),
-    y1 = unit(0, "npc"),
-    gp  = gpar(col = "grey60", lwd = 0.8)
-  ),
-  t = 1, b = 1, l = 1, r = ncol(mfig4b_tt)
-)
-
-# Create title grob
-title_grob <- grid::textGrob(
-  "Within-Person Mean Change Summary",
-  gp   = grid::gpar(fontsize = 11.5, fontface = "plain"),
-  just = c("left", "bottom"),
-  x    = grid::unit(0, "npc"),
-  y    = grid::unit(0.5, "npc")
-)
-
-# Create small row above the table and insert title
-mfig4b_tt <- gtable::gtable_add_rows(
-  mfig4b_tt,
-  heights = grid::unit(1.2, "lines"),
-  pos = 0
-)
-mfig4b_tt <- gtable::gtable_add_grob(
-  mfig4b_tt,
-  grobs = title_grob,
-  t = 1, l = 1, r = ncol(mfig4b_tt)
-)
-
-# Change grob table width
-mfig4b_tt$widths <- grid::unit(
-  c(0.15, 0.25, 0.35, 0.25),  # tweak as needed
-  "npc"
-)
-
-#-----------------------------#
 # Stack plot and table
-
-mfig4b_wf_hdl_abs_tt <-
-  mfig4b_wf_hdl_abs /
-  wrap_elements(mfig4b_tt) +
+mfig4wf_hdl_tt <-
+  mfig4wf_hdl /
+  wrap_elements(mfig4wf_hdl_tt) +
   plot_layout(heights = c(3, 1))
 
-mfig4b_wf_hdl_abs_tt
 
-```
-
-c) Waterfall Plot for LDL change (Absolute)
-```{r}
-#----------------------------------------#
-# Waterfall plot: 6m-0m LDL change (Absolute)
+#------------------------------------------------------------------------------#
+# LDL waterfall plot
 
 # Build change table (complete cases for LDL only)
 data_wf_ldl_abs <- data_wide[
@@ -5958,10 +6800,8 @@ data_wf_ldl_abs[, direction := fifelse(val_change < 0, "Decrease", "Increase or 
 wf_boundary_x <- data_wf_ldl_abs[val_change < 0, max(order_id, na.rm = TRUE)]
 wf_boundary_x <- if (is.finite(wf_boundary_x)) wf_boundary_x + 0.5 else NA_real_
 
-#-----------------------------#
 # Plot
-
-mfig4c_wf_ldl_abs <- ggplot(data_wf_ldl_abs, aes(x = order_id, y = val_change, fill = direction)) +
+mfig4wf_ldl <- ggplot(data_wf_ldl_abs, aes(x = order_id, y = val_change, fill = direction)) +
   geom_col(width = 1, alpha = 0.75) +
   geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.6) +
   {if (is.finite(wf_boundary_x))
@@ -5976,13 +6816,7 @@ mfig4c_wf_ldl_abs <- ggplot(data_wf_ldl_abs, aes(x = order_id, y = val_change, f
     expand = c(0, 0),
     breaks = function(x) {
       rng <- range(x, na.rm = TRUE)
-      c(
-        rng[1],
-        round(rng[2] * 0.25),
-        round(rng[2] * 0.50),
-        round(rng[2] * 0.75),
-        rng[2]
-      )
+      c(rng[1], round(rng[2] * 0.25), round(rng[2] * 0.50), round(rng[2] * 0.75), rng[2])
     },
     labels = function(x) scales::comma(x)
   ) +
@@ -6002,103 +6836,29 @@ mfig4c_wf_ldl_abs <- ggplot(data_wf_ldl_abs, aes(x = order_id, y = val_change, f
     plot.background  = element_rect(fill = "white", colour = NA)
   )
 
-plot(mfig4c_wf_ldl_abs)
-
-#-----------------------------#
-# Table
-
 # Create table
-mfig4c_tt <- rfig2_ttest_results[
-  measure == "LDL (mmol/L)" &
-    subgroup == "Full Sample" & 
-    scale == "Absolute Change",
+mfig4wf_ldl_tt <- mfig4_blood_ttest_tbl[
+  comparison == "LDL absolute change",
   .(
     N = n,
     `Mean Change` = sprintf("%.2f", mean_change),
-    `95% CI` = paste0(
-      sprintf("%.2f", ci_low),
-      " to ",
-      sprintf("%.2f", ci_high)
-    ),
-    `P Value` = format_pval(p_value)
+    `95% CI` = paste0(sprintf("%.2f", ci_low), " to ", sprintf("%.2f", ci_high)),
+    `Unadj. P Value` = format_pval(p_raw),
+    `FDR-adj. P Value` = format_pval(p_fdr)
   )
 ]
 
-# Convert to grob table
-mfig4c_tt <- tableGrob(
-  mfig4c_tt,
-  rows = NULL,
-  theme = ttheme_minimal(
-    base_size = 11,
+mfig4wf_ldl_tt <- make_mfig4_table_grob(mfig4wf_ldl_tt)
 
-    core = list(
-      fg_params = list(hjust = 0.5, x = 0.5),
-      bg_params = list(col = NA)
-    ),
-
-    colhead = list(
-      fg_params = list(hjust = 0.5, x = 0.5),
-      bg_params = list(col = NA)
-    )
-  )
-)
-
-# Add header line to grob table
-mfig4c_tt <- gtable::gtable_add_grob(
-  mfig4c_tt,
-  grobs = grid::segmentsGrob(
-    x0 = unit(0, "npc"),
-    x1 = unit(1, "npc"),
-    y0 = unit(0, "npc"),
-    y1 = unit(0, "npc"),
-    gp  = gpar(col = "grey60", lwd = 0.8)
-  ),
-  t = 1, b = 1, l = 1, r = ncol(mfig4c_tt)
-)
-
-# Create title grob
-title_grob <- grid::textGrob(
-  "Within-Person Mean Change Summary",
-  gp   = grid::gpar(fontsize = 11.5, fontface = "plain"),
-  just = c("left", "bottom"),
-  x    = grid::unit(0, "npc"),
-  y    = grid::unit(0.5, "npc")
-)
-
-# Create small row above the table and insert title
-mfig4c_tt <- gtable::gtable_add_rows(
-  mfig4c_tt,
-  heights = grid::unit(1.2, "lines"),
-  pos = 0
-)
-mfig4c_tt <- gtable::gtable_add_grob(
-  mfig4c_tt,
-  grobs = title_grob,
-  t = 1, l = 1, r = ncol(mfig4c_tt)
-)
-
-# Change grob table width
-mfig4c_tt$widths <- grid::unit(
-  c(0.15, 0.25, 0.35, 0.25),  # tweak as needed
-  "npc"
-)
-
-#-----------------------------#
 # Stack plot and table
-
-mfig4c_wf_ldl_abs_tt <-
-  mfig4c_wf_ldl_abs /
-  wrap_elements(mfig4c_tt) +
+mfig4wf_ldl_tt <-
+  mfig4wf_ldl /
+  wrap_elements(mfig4wf_ldl_tt) +
   plot_layout(heights = c(3, 1))
 
-mfig4c_wf_ldl_abs_tt
 
-```
-
-d) Waterfall Plot for Triglycerides change (Absolute)
-```{r}
-#----------------------------------------#
-# Waterfall plot: 6m-0m Triglycerides change ()
+#------------------------------------------------------------------------------#
+# TG waterfall plot
 
 # Build change table (complete cases for Triglycerides only)
 data_wf_tg_abs <- data_wide[
@@ -6121,10 +6881,8 @@ data_wf_tg_abs[, direction := fifelse(val_change < 0, "Decrease", "Increase or N
 wf_boundary_x <- data_wf_tg_abs[val_change < 0, max(order_id, na.rm = TRUE)]
 wf_boundary_x <- if (is.finite(wf_boundary_x)) wf_boundary_x + 0.5 else NA_real_
 
-#-----------------------------#
 # Plot
-
-mfig4d_wf_tg_abs <- ggplot(data_wf_tg_abs, aes(x = order_id, y = val_change, fill = direction)) +
+mfig4wf_tg <- ggplot(data_wf_tg_abs, aes(x = order_id, y = val_change, fill = direction)) +
   geom_col(width = 1, alpha = 0.75) +
   geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.6) +
   {if (is.finite(wf_boundary_x))
@@ -6139,13 +6897,7 @@ mfig4d_wf_tg_abs <- ggplot(data_wf_tg_abs, aes(x = order_id, y = val_change, fil
     expand = c(0, 0),
     breaks = function(x) {
       rng <- range(x, na.rm = TRUE)
-      c(
-        rng[1],
-        round(rng[2] * 0.25),
-        round(rng[2] * 0.50),
-        round(rng[2] * 0.75),
-        rng[2]
-      )
+      c(rng[1], round(rng[2] * 0.25), round(rng[2] * 0.50), round(rng[2] * 0.75), rng[2])
     },
     labels = function(x) scales::comma(x)
   ) +
@@ -6165,224 +6917,452 @@ mfig4d_wf_tg_abs <- ggplot(data_wf_tg_abs, aes(x = order_id, y = val_change, fil
     plot.background  = element_rect(fill = "white", colour = NA)
   )
 
-plot(mfig4d_wf_tg_abs)
-
-#-----------------------------#
-# Table
-
 # Create table
-mfig4d_tt <- rfig2_ttest_results[
-  measure == "Triglycerides (mmol/L)" &
-    subgroup == "Full Sample" & 
-    scale == "Absolute Change",
+mfig4wf_tg_tt <- mfig4_blood_ttest_tbl[
+  comparison == "Triglycerides absolute change",
   .(
     N = n,
     `Mean Change` = sprintf("%.2f", mean_change),
-    `95% CI` = paste0(
-      sprintf("%.2f", ci_low),
-      " to ",
-      sprintf("%.2f", ci_high)
-    ),
-    `P Value` = format_pval(p_value)
+    `95% CI` = paste0(sprintf("%.2f", ci_low), " to ", sprintf("%.2f", ci_high)),
+    `Unadj. P Value` = format_pval(p_raw),
+    `FDR-adj. P Value` = format_pval(p_fdr)
   )
 ]
 
-# Convert to grob table
-mfig4d_tt <- tableGrob(
-  mfig4d_tt,
-  rows = NULL,
-  theme = ttheme_minimal(
-    base_size = 11,
+mfig4wf_tg_tt <- make_mfig4_table_grob(mfig4wf_tg_tt)
 
-    core = list(
-      fg_params = list(hjust = 0.5, x = 0.5),
-      bg_params = list(col = NA)
-    ),
-
-    colhead = list(
-      fg_params = list(hjust = 0.5, x = 0.5),
-      bg_params = list(col = NA)
-    )
-  )
-)
-
-# Add header line to grob table
-mfig4d_tt <- gtable::gtable_add_grob(
-  mfig4d_tt,
-  grobs = grid::segmentsGrob(
-    x0 = unit(0, "npc"),
-    x1 = unit(1, "npc"),
-    y0 = unit(0, "npc"),
-    y1 = unit(0, "npc"),
-    gp  = gpar(col = "grey60", lwd = 0.8)
-  ),
-  t = 1, b = 1, l = 1, r = ncol(mfig4d_tt)
-)
-
-# Create title grob
-title_grob <- grid::textGrob(
-  "Within-Person Mean Change Summary",
-  gp   = grid::gpar(fontsize = 11.5, fontface = "plain"),
-  just = c("left", "bottom"),
-  x    = grid::unit(0, "npc"),
-  y    = grid::unit(0.5, "npc")
-)
-
-# Create small row above the table and insert title
-mfig4d_tt <- gtable::gtable_add_rows(
-  mfig4d_tt,
-  heights = grid::unit(1.2, "lines"),
-  pos = 0
-)
-mfig4d_tt <- gtable::gtable_add_grob(
-  mfig4d_tt,
-  grobs = title_grob,
-  t = 1, l = 1, r = ncol(mfig4d_tt)
-)
-
-# Change grob table width
-mfig4d_tt$widths <- grid::unit(
-  c(0.15, 0.25, 0.35, 0.25),  # tweak as needed
-  "npc"
-)
-
-#-----------------------------#
 # Stack plot and table
-
-mfig4d_wf_tg_abs_tt <-
-  mfig4d_wf_tg_abs /
-  wrap_elements(mfig4d_tt) +
+mfig4wf_tg_tt <-
+  mfig4wf_tg /
+  wrap_elements(mfig4wf_tg_tt) +
   plot_layout(heights = c(3, 1))
 
-mfig4d_wf_tg_abs_tt
 
-```
-
-e) Combine into one plot
-```{r}
 #------------------------------------------------------------------------------#
-# Combine 4 plots
+# HbA1c (abs) waterfall plot
 
-mfig4_lipid <-
-  (mfig4a_wf_tc_abs_tt | mfig4b_wf_hdl_abs_tt) /
-  plot_spacer() /
-  (mfig4c_wf_ldl_abs_tt | mfig4d_wf_tg_abs_tt) +
-  plot_layout(
-    heights = c(1, 0.05, 1) # middle number for middle gap
+# Build change table (complete cases for HbA1c only)
+data_wf_hba1c_abs <- data_wide[
+  !is.na(blood_hba1c_mmolmol_0m) & !is.na(blood_hba1c_mmolmol_6m),
+  .(patid, val_0m = blood_hba1c_mmolmol_0m, val_6m = blood_hba1c_mmolmol_6m)
+][
+  is.finite(val_0m) & is.finite(val_6m)
+][
+  , val_change := val_6m - val_0m
+][
+  is.finite(val_change)
+]
+
+# Order patients from most decrease to most increase
+setorder(data_wf_hba1c_abs, val_change)
+data_wf_hba1c_abs[, order_id := seq_len(.N)]
+data_wf_hba1c_abs[, direction := fifelse(val_change < 0, "Decrease", "Increase or No Change")]
+
+# Boundary where change switches from - to +
+wf_boundary_x <- data_wf_hba1c_abs[val_change < 0, max(order_id, na.rm = TRUE)]
+wf_boundary_x <- if (is.finite(wf_boundary_x)) wf_boundary_x + 0.5 else NA_real_
+
+# Plot
+mfig4wf_hba1cabs <- ggplot(data_wf_hba1c_abs, aes(x = order_id, y = val_change, fill = direction)) +
+  geom_col(width = 1, alpha = 0.75) +
+  geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.6) +
+  {if (is.finite(wf_boundary_x))
+    geom_vline(xintercept = wf_boundary_x, linetype = "dotted", linewidth = 0.6, colour = "black")} +
+  scale_fill_manual(
+    values = c(
+      "Decrease"              = "#0B2A5B",
+      "Increase or No Change" = "#04BFAF"
+    )
   ) +
-  plot_annotation(
-    #title = "Change in Lipid Profiles from Baseline to 6 Month Follow-up",
-    theme = theme(plot.title = element_text(size = 16, margin = margin(b = 14)))
+  scale_x_continuous(
+    expand = c(0, 0),
+    breaks = function(x) {
+      rng <- range(x, na.rm = TRUE)
+      c(rng[1], round(rng[2] * 0.25), round(rng[2] * 0.50), round(rng[2] * 0.75), rng[2])
+    },
+    labels = function(x) scales::comma(x)
+  ) +
+  labs(
+    x = "Patients (Ordered by HbA1c Change)",
+    y = "Change in HbA1c (mmol/mol)",
+    title = "Change in HbA1c (mmol/mol)",
+    fill = NULL,
+  ) +
+  fig_theme +
+  theme(
+    axis.text.x = element_text(size = 9),
+    axis.ticks.x = element_line(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    panel.background = element_rect(fill = "white", colour = NA),
+    plot.background  = element_rect(fill = "white", colour = NA)
   )
 
-plot(mfig4_lipid)
+# Create table
+mfig4wf_hba1cabs_tt <- mfig4_blood_ttest_tbl[
+  comparison == "Overall HbA1c absolute change",
+  .(
+    N = n,
+    `Mean Change` = sprintf("%.2f", mean_change),
+    `95% CI` = paste0(sprintf("%.2f", ci_low), " to ", sprintf("%.2f", ci_high)),
+    `Unadj. P Value` = format_pval(p_raw),
+    `FDR-adj. P Value` = format_pval(p_fdr)
+  )
+]
+
+mfig4wf_hba1cabs_tt <- make_mfig4_table_grob(mfig4wf_hba1cabs_tt)
+
+# Stack plot and table
+mfig4wf_hba1cabs_tt <-
+  mfig4wf_hba1cabs /
+  wrap_elements(mfig4wf_hba1cabs_tt) +
+  plot_layout(heights = c(3, 1))
 
 
 #------------------------------------------------------------------------------#
-# Export plot
+# HbA1c (%) waterfall plot
 
-ggsave(
-  mfig4_lipid, 
-  filename = "Final Outputs/mfig4bextra-lipid.png",
-  width = 18, height = 12, dpi = 300
+# Build change table (complete cases for HbA1c only)
+data_wf_hba1c_pct <- data_wide[
+  !is.na(blood_hba1c_mmolmol_0m) & !is.na(blood_hba1c_mmolmol_6m),
+  .(patid, val_0m = blood_hba1c_mmolmol_0m, val_6m = blood_hba1c_mmolmol_6m)
+][
+  is.finite(val_0m) & is.finite(val_6m)
+][
+  , val_change := 100 * (val_6m - val_0m) / val_0m
+][
+  is.finite(val_change)
+]
+
+# Order patients from most decrease to most increase
+setorder(data_wf_hba1c_pct, val_change)
+data_wf_hba1c_pct[, order_id := seq_len(.N)]
+data_wf_hba1c_pct[, direction := fifelse(val_change < 0, "Decrease", "Increase or No Change")]
+
+# Boundary where change switches from - to +
+wf_boundary_x <- data_wf_hba1c_pct[val_change < 0, max(order_id, na.rm = TRUE)]
+wf_boundary_x <- if (is.finite(wf_boundary_x)) wf_boundary_x + 0.5 else NA_real_
+
+# Plot
+mfig4wf_hba1cpct <- ggplot(data_wf_hba1c_pct, aes(x = order_id, y = val_change, fill = direction)) +
+  geom_col(width = 1, alpha = 0.75) +
+  geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.6) +
+  {if (is.finite(wf_boundary_x))
+    geom_vline(xintercept = wf_boundary_x, linetype = "dotted", linewidth = 0.6, colour = "black")} +
+  scale_fill_manual(
+    values = c(
+      "Decrease"              = "#0B2A5B",
+      "Increase or No Change" = "#04BFAF"
+    )
+  ) +
+  scale_x_continuous(
+    expand = c(0, 0),
+    breaks = function(x) {
+      rng <- range(x, na.rm = TRUE)
+      c(rng[1], round(rng[2] * 0.25), round(rng[2] * 0.50), round(rng[2] * 0.75), rng[2])
+    },
+    labels = function(x) scales::comma(x)
+  ) +
+  labs(
+    x = "Patients (Ordered by HbA1c Change)",
+    y = "Change in HbA1c (%)",
+    title = "Change in HbA1c (%)",
+    fill = NULL,
+  ) +
+  fig_theme +
+  theme(
+    axis.text.x = element_text(size = 9),
+    axis.ticks.x = element_line(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    panel.background = element_rect(fill = "white", colour = NA),
+    plot.background  = element_rect(fill = "white", colour = NA)
+  )
+
+# Create table
+mfig4wf_hba1cpct_tt <- mfig4_blood_ttest_tbl[
+  comparison == "Overall HbA1c percent change",
+  .(
+    N = n,
+    `Mean Change` = sprintf("%.2f", mean_change),
+    `95% CI` = paste0(sprintf("%.2f", ci_low), " to ", sprintf("%.2f", ci_high)),
+    `Unadj. P Value` = format_pval(p_raw),
+    `FDR-adj. P Value` = format_pval(p_fdr)
+  )
+]
+
+mfig4wf_hba1cpct_tt <- make_mfig4_table_grob(mfig4wf_hba1cpct_tt)
+
+# Stack plot and table
+mfig4wf_hba1cpct_tt <-
+  mfig4wf_hba1cpct /
+  wrap_elements(mfig4wf_hba1cpct_tt) +
+  plot_layout(heights = c(3, 1))
+
+
+#------------------------------------------------------------------------------#
+# Diabetic HbA1c boxplot
+
+# Data Prep (Convert to long)
+box_long <- data_wide[
+  !is.na(hba1c_cat_0m) & !is.na(hba1c_cat_6m) &
+    hba1c_cat_0m == "Diabetic",
+  .(
+    patid,
+    `Baseline` = blood_hba1c_mmolmol_0m,
+    `6 months` = blood_hba1c_mmolmol_6m
+  )
+][
+  , melt(.SD,
+         id.vars       = "patid",
+         variable.name = "time",
+         value.name    = "hba1c")
+]
+
+# Automated title
+title_box_diab <- make_box_title(
+  dt = data_wide,
+  subgroup_filter = quote(!is.na(hba1c_cat_0m) & hba1c_cat_0m == "Diabetic" &
+                            !is.na(blood_hba1c_mmolmol_0m) & !is.na(blood_hba1c_mmolmol_6m)),
+  title_prefix = "Diabetic HbA1c at Baseline",
+  denom_filter = quote(!is.na(blood_hba1c_mmolmol_0m) & !is.na(blood_hba1c_mmolmol_6m)),
+  digits_pct = 1
 )
+
+# Plot
+mfig4bw_diab <- ggplot(
+  box_long,
+  aes(x = time, y = hba1c, fill = time)
+) +
+  geom_boxplot(
+    width = 0.55,
+    alpha = 0.65,
+    outlier.alpha = 0.25,
+    linewidth = 0.6
+  ) +
+  stat_summary(fun = median, geom = "point", size = 2.6, colour = "black") +
+  stat_summary(fun = median, geom = "line", aes(group = 1), linewidth = 0.8, linetype = "dashed", colour = "black") +
+  scale_fill_manual(
+    values = c(
+      "Baseline" = "#0B2A5B",
+      "6 months" = "#04BFAF"
+    )
+  ) +
+  labs(
+    x = "Follow-up Period",
+    y = "HbA1c (mmol/mol)",
+    fill = NULL,
+    title = title_box_diab
+  ) +
+  fig_theme +
+  theme(
+    panel.background = element_rect(fill = "white", colour = NA),
+    plot.background  = element_rect(fill = "white", colour = NA),
+    axis.title.y     = element_text(margin = margin(r = 10)),
+    plot.title       = element_text(face = "plain"),
+    legend.position  = "none"
+  )
+
+# Create table
+mfig4bw_diab_tt <- mfig4_hba1c_cat_ttest_tbl[
+  comparison == "Baseline diabetic HbA1c group",
+  .(
+    N = n,
+    `Mean Change` = sprintf("%.2f", mean_change),
+    `95% CI` = paste0(sprintf("%.2f", ci_low), " to ", sprintf("%.2f", ci_high)),
+    `Unadj. P` = format_pval(p_raw),
+    `FDR-adj. P` = format_pval(p_fdr)
+  )
+]
+
+mfig4bw_diab_tt <- make_mfig4_table_grob(
+  mfig4bw_diab_tt,
+  col_widths = c(0.12, 0.22, 0.26, 0.20, 0.20)
+)
+
+# Stack plot and table
+mfig4bw_diab_tt <-
+  mfig4bw_diab /
+  wrap_elements(mfig4bw_diab_tt) +
+  plot_layout(heights = c(3, 1))
+
+
+#------------------------------------------------------------------------------#
+# Pre-diabetic HbA1c boxplot
+
+# Data Prep (Convert to long)
+box_long <- data_wide[
+  !is.na(hba1c_cat_0m) & !is.na(hba1c_cat_6m) &
+    hba1c_cat_0m == "Pre-Diabetic",
+  .(
+    patid,
+    `Baseline` = blood_hba1c_mmolmol_0m,
+    `6 months` = blood_hba1c_mmolmol_6m
+  )
+][
+  , melt(.SD,
+         id.vars       = "patid",
+         variable.name = "time",
+         value.name    = "hba1c")
+]
+
+# Automated title
+title_box_pdiab <- make_box_title(
+  dt = data_wide,
+  subgroup_filter = quote(!is.na(hba1c_cat_0m) & hba1c_cat_0m == "Pre-Diabetic" &
+                            !is.na(blood_hba1c_mmolmol_0m) & !is.na(blood_hba1c_mmolmol_6m)),
+  title_prefix = "Pre-Diabetic HbA1c at Baseline",
+  denom_filter = quote(!is.na(blood_hba1c_mmolmol_0m) & !is.na(blood_hba1c_mmolmol_6m)),
+  digits_pct = 1
+)
+
+# Plot
+mfig4bw_pdiab <- ggplot(
+  box_long,
+  aes(x = time, y = hba1c, fill = time)
+) +
+  geom_boxplot(
+    width = 0.55,
+    alpha = 0.65,
+    outlier.alpha = 0.25,
+    linewidth = 0.6
+  ) +
+  stat_summary(fun = median, geom = "point", size = 2.6, colour = "black") +
+  stat_summary(fun = median, geom = "line", aes(group = 1), linewidth = 0.8, linetype = "dashed", colour = "black") +
+  scale_fill_manual(
+    values = c(
+      "Baseline" = "#0B2A5B",
+      "6 months" = "#04BFAF"
+    )
+  ) +
+  labs(
+    x = "Follow-up Period",
+    y = "HbA1c (mmol/mol)",
+    fill = NULL,
+    title = title_box_pdiab
+  ) +
+  fig_theme +
+  theme(
+    panel.background = element_rect(fill = "white", colour = NA),
+    plot.background  = element_rect(fill = "white", colour = NA),
+    axis.title.y     = element_text(margin = margin(r = 10)),
+    plot.title       = element_text(face = "plain"),
+    legend.position  = "none"
+  )
+
+# Create table
+mfig4bw_pdiab_tt <- mfig4_hba1c_cat_ttest_tbl[
+  comparison == "Baseline pre-diabetic HbA1c group",
+  .(
+    N = n,
+    `Mean Change` = sprintf("%.2f", mean_change),
+    `95% CI` = paste0(sprintf("%.2f", ci_low), " to ", sprintf("%.2f", ci_high)),
+    `Unadj. P` = format_pval(p_raw),
+    `FDR-adj. P` = format_pval(p_fdr)
+  )
+]
+
+mfig4bw_pdiab_tt <- make_mfig4_table_grob(
+  mfig4bw_pdiab_tt,
+  col_widths = c(0.12, 0.22, 0.26, 0.20, 0.20)
+)
+
+# Stack plot and table
+mfig4bw_pdiab_tt <-
+  mfig4bw_pdiab /
+  wrap_elements(mfig4bw_pdiab_tt) +
+  plot_layout(heights = c(3, 1))
+
+
+#------------------------------------------------------------------------------#
+# Normal HbA1c boxplot
+
+# Data Prep (Convert to long)
+box_long <- data_wide[
+  !is.na(hba1c_cat_0m) & !is.na(hba1c_cat_6m) &
+    hba1c_cat_0m == "Normal",
+  .(
+    patid,
+    `Baseline` = blood_hba1c_mmolmol_0m,
+    `6 months` = blood_hba1c_mmolmol_6m
+  )
+][
+  , melt(.SD,
+         id.vars       = "patid",
+         variable.name = "time",
+         value.name    = "hba1c")
+]
+
+# Automated title
+title_box_norm <- make_box_title(
+  dt = data_wide,
+  subgroup_filter = quote(!is.na(hba1c_cat_0m) & hba1c_cat_0m == "Normal" &
+                            !is.na(blood_hba1c_mmolmol_0m) & !is.na(blood_hba1c_mmolmol_6m)),
+  title_prefix = "Normal HbA1c at Baseline",
+  denom_filter = quote(!is.na(blood_hba1c_mmolmol_0m) & !is.na(blood_hba1c_mmolmol_6m)),
+  digits_pct = 1
+)
+
+# Plot
+mfig4bw_norm <- ggplot(
+  box_long,
+  aes(x = time, y = hba1c, fill = time)
+) +
+  geom_boxplot(
+    width = 0.55,
+    alpha = 0.65,
+    outlier.alpha = 0.25,
+    linewidth = 0.6
+  ) +
+  stat_summary(fun = median, geom = "point", size = 2.6, colour = "black") +
+  stat_summary(fun = median, geom = "line", aes(group = 1), linewidth = 0.8, linetype = "dashed", colour = "black") +
+  scale_fill_manual(
+    values = c(
+      "Baseline" = "#0B2A5B",
+      "6 months" = "#04BFAF"
+    )
+  ) +
+  labs(
+    x = "Follow-up Period",
+    y = "HbA1c (mmol/mol)",
+    fill = NULL,
+    title = title_box_norm
+  ) +
+  fig_theme +
+  theme(
+    panel.background = element_rect(fill = "white", colour = NA),
+    plot.background  = element_rect(fill = "white", colour = NA),
+    axis.title.y     = element_text(margin = margin(r = 10)),
+    plot.title       = element_text(face = "plain"),
+    legend.position  = "none"
+  )
+
+# Create table
+mfig4bw_norm_tt <- mfig4_hba1c_cat_ttest_tbl[
+  comparison == "Baseline normal HbA1c group",
+  .(
+    N = n,
+    `Mean Change` = sprintf("%.2f", mean_change),
+    `95% CI` = paste0(sprintf("%.2f", ci_low), " to ", sprintf("%.2f", ci_high)),
+    `Unadj. P` = format_pval(p_raw),
+    `FDR-adj. P` = format_pval(p_fdr)
+  )
+]
+
+mfig4bw_norm_tt <- make_mfig4_table_grob(
+  mfig4bw_norm_tt,
+  col_widths = c(0.12, 0.22, 0.26, 0.20, 0.20)
+)
+
+# Stack plot and table
+mfig4bw_norm_tt <-
+  mfig4bw_norm /
+  wrap_elements(mfig4bw_norm_tt) +
+  plot_layout(heights = c(3, 1))
 
 ```
 
-f) HDL change subgroup table (for checking only)
-```{r}
-#------------------------------------------------------------------------------#
-# Create HDL subgroup table for checking
-
-# Calculate HDL change
-data_wide[, hdl_change_06m := blood_hdl_mmoll_6m - blood_hdl_mmoll_0m]
-
-# 1) Stratified by age_cat5
-hdl_by_age <- data_wide[
-  !is.na(hdl_change_06m),
-  .(
-    n          = .N,
-    mean_hdl   = mean(hdl_change_06m, na.rm = TRUE),
-    sd_hdl     = sd(hdl_change_06m, na.rm = TRUE),
-    median_hdl = median(hdl_change_06m, na.rm = TRUE),
-    iqr_l      = quantile(hdl_change_06m, 0.25, na.rm = TRUE),
-    iqr_u      = quantile(hdl_change_06m, 0.75, na.rm = TRUE)
-  ),
-  by = age_cat5
-][order(age_cat5)]
-
-# 2) Stratified by wt_kg_0m_cat
-hdl_by_wt <- data_wide[
-  !is.na(hdl_change_06m),
-  .(
-    n          = .N,
-    mean_hdl   = mean(hdl_change_06m, na.rm = TRUE),
-    sd_hdl     = sd(hdl_change_06m, na.rm = TRUE),
-    median_hdl = median(hdl_change_06m, na.rm = TRUE),
-    iqr_l      = quantile(hdl_change_06m, 0.25, na.rm = TRUE),
-    iqr_u      = quantile(hdl_change_06m, 0.75, na.rm = TRUE)
-  ),
-  by = wt_kg_0m_cat
-][order(wt_kg_0m_cat)]
-
-# 3) Stratified by area_imd_qt
-hdl_by_imd <- data_wide[
-  !is.na(hdl_change_06m),
-  .(
-    n          = .N,
-    mean_hdl   = mean(hdl_change_06m, na.rm = TRUE),
-    sd_hdl     = sd(hdl_change_06m, na.rm = TRUE),
-    median_hdl = median(hdl_change_06m, na.rm = TRUE),
-    iqr_l      = quantile(hdl_change_06m, 0.25, na.rm = TRUE),
-    iqr_u      = quantile(hdl_change_06m, 0.75, na.rm = TRUE)
-  ),
-  by = area_imd_qt
-][order(area_imd_qt)]
-
-# Assign stratification var name
-hdl_by_age[, strat_var := "Age"]
-hdl_by_wt[,  strat_var := "Baseline weight"]
-hdl_by_imd[, strat_var := "IMD"]
-
-# Harmonise column names
-setnames(hdl_by_age, "age_cat5",     "stratum")
-setnames(hdl_by_wt,  "wt_kg_0m_cat",  "stratum")
-setnames(hdl_by_imd, "area_imd_qt",   "stratum")
-
-# Row bind
-mfig4_hdl_subgrp_check <- rbindlist(
-  list(hdl_by_age, hdl_by_wt, hdl_by_imd),
-  use.names = TRUE,
-  fill = TRUE
-)
-
-# Move strat_var to the left
-setcolorder(
-  mfig4_hdl_subgrp_check,
-  c("strat_var", "stratum",
-    setdiff(names(mfig4_hdl_subgrp_check), c("strat_var", "stratum")))
-)
-
-mfig4_hdl_subgrp_check
-
-
-#------------------------------------------------------------------------------#
-# Export table
-
-fwrite(
-  mfig4_hdl_subgrp_check,
-  file = "Final Outputs/mfig4extra-tab-hdl-subgrp-check.csv",
-  bom = TRUE, quote = TRUE
-)
-
-```
-
-
-
-################################################################################ 
-# MFig4c. HbA1c and Lipids Combined
-################################################################################ 
-
+c) Combine plots
 ```{r}
 #------------------------------------------------------------------------------#
 # Combine plots
@@ -6424,15 +7404,15 @@ W <- function(x,
 # Combine subplots into final plot
 
 # Inner rows (wrapped)
-tc        <- W(mfig4a_wf_tc_abs_tt)
-hdl       <- W(mfig4b_wf_hdl_abs_tt)
-ldl       <- W(mfig4c_wf_ldl_abs_tt)
-tg        <- W(mfig4d_wf_tg_abs_tt)
-hba1c_abs <- W(mfig4a_wf_hba1c_abs_tt)
-hba1c_pct <- W(mfig4b_wf_hba1c_pct_tt)
+tc        <- W(mfig4wf_chol_tt)
+hdl       <- W(mfig4wf_hdl_tt)
+ldl       <- W(mfig4wf_ldl_tt)
+tg        <- W(mfig4wf_tg_tt)
+hba1c_abs <- W(mfig4wf_hba1cabs_tt)
+hba1c_pct <- W(mfig4wf_hba1cpct_tt)
 
 # 3 boxplots (each wrapped)
-box_row <- W(mfig4c_box_diab_tt) | W(mfig4d_box_pdiab_tt) | W(mfig4e_box_norm_tt)
+box_row <- W(mfig4bw_diab_tt) | W(mfig4bw_pdiab_tt) | W(mfig4bw_norm_tt)
 
 top_2col <- (tc | hdl) / (ldl | tg) / (hba1c_abs | hba1c_pct)
 
@@ -6521,7 +7501,7 @@ setorder(rx_long, patid, glp1_idx)
 #-----------------------------#
 # Collapse weekly dose to monthly dose
 
-# Set month weeks (13 wks = 3 months, 26 weks = 6 months)
+# Set month weeks (13 wks = 3 months, 26 wks = 6 months)
 month_weeks <- c(0, 4, 8, 13, 17, 21, 26)
 
 # Create monthly snapshots for mounjaro
@@ -7202,7 +8182,7 @@ labels <- list(
     area_imd_qt             = "Index of Multiple Deprivation (Quintile)"
   ),
 
-  # Column group header (matches the blog example layout)
+  # Column group header
   groups = list("", "Age Group")
 )
 
@@ -7271,7 +8251,7 @@ data_hm <- copy(data_wide)
 
 data_hm[, age_cat5 := factor(
   age_cat5,
-  levels = c("18–29","30–39","40–49","50–59","60–79")
+  levels = c("18 to <30","30 to <40","40 to <50","50 to <60","60 to <80")
 )]
 
 data_hm[, area_imd_qt := factor(
@@ -7289,28 +8269,29 @@ data_hm[, wt_kg_0m_cat3 := factor(
   fifelse(
     wt_kg_0m_cat == "<90 kg", "<90 kg",
     fifelse(
-      wt_kg_0m_cat %in% c("90–99 kg", "100–109 kg"), "90–109 kg",
+      wt_kg_0m_cat %in% c("90 to <100 kg", "100 to <110 kg"), "90 to <110 kg",
       "≥110 kg"
     )
   ),
-  levels = c("<90 kg", "90–109 kg", "≥110 kg")
+  levels = c("<90 kg", "90 to <110 kg", "≥110 kg")
 )]
 
 # Reduce baseline BMI categories from 5 to 3 due to small cell counts
 data_hm[, bmi_0m_cat3 := factor(
   fifelse(
-    bmi_0m_cat %in% c("Overweight (25.0–29.9)", 
-                      "Obesity I (30.0–34.9)"),
-    "Overweight / Obesity I (25.0–34.9)",
+    bmi_0m_cat %in% c(
+      "Overweight (25.0 to <30.0)", 
+      "Obesity I (30.0 to <35.0)"),
+      "Overweight / Obesity I (25.0 to <35.0)",
     fifelse(
-      bmi_0m_cat == "Obesity II (35.0–39.9)",
-      "Obesity II (35.0–39.9)",
+      bmi_0m_cat == "Obesity II (35.0 to <40.0)",
+      "Obesity II (35.0 to <40.0)",
       "Obesity III (≥40.0)"
     )
   ),
   levels = c(
-    "Overweight / Obesity I (25.0–34.9)",
-    "Obesity II (35.0–39.9)",
+    "Overweight / Obesity I (25.0 to <35.0)",
+    "Obesity II (35.0 to <40.0)",
     "Obesity III (≥40.0)"
   )
 )]
@@ -7506,7 +8487,7 @@ plot_heatmap <- function(
 sfig1_hm_kg <- plot_heatmap(
   hm_kg_abs, "Absolute Weight Change (kg)", "Mean Change (kg)", digits = 1,
   facet_var = "wt_kg_0m_cat3",
-  facet_levels = c("<90 kg", "90–109 kg", "≥110 kg"),
+  facet_levels = c("<90 kg", "90 to <110 kg", "≥110 kg"),
   facet_prefix = "Baseline Weight\n"
 )
 
@@ -7514,7 +8495,7 @@ sfig1_hm_kg <- plot_heatmap(
 sfig1_hm_kg_pct <- plot_heatmap(
   hm_kg_pct, "Percentage Weight Change (%)", "Mean Change (%)", digits = 1,
   facet_var = "wt_kg_0m_cat3",
-  facet_levels = c("<90 kg", "90–109 kg", "≥110 kg"),
+  facet_levels = c("<90 kg", "90 to <110 kg", "≥110 kg"),
   facet_prefix = "Baseline Weight\n"
 )
 
@@ -7523,8 +8504,8 @@ sfig1_hm_bmi_abs <- plot_heatmap(
   hm_bmi_abs, "Absolute BMI Change", "Mean Change (BMI)", digits = 1,
   facet_var = "bmi_0m_cat3",
   facet_levels = c(
-    "Overweight / Obesity I (25.0–34.9)",
-    "Obesity II (35.0–39.9)",
+    "Overweight / Obesity I (25.0 to <35.0)",
+    "Obesity II (35.0 to <40.0)",
     "Obesity III (≥40.0)"
   ),
   facet_prefix = "Baseline BMI\n"
@@ -7535,8 +8516,8 @@ sfig1_hm_bmi_pct <- plot_heatmap(
   hm_bmi_pct, "Percentage BMI Change (%)", "Mean Change (%)", digits = 1,
   facet_var = "bmi_0m_cat3",
   facet_levels = c(
-    "Overweight / Obesity I (25.0–34.9)",
-    "Obesity II (35.0–39.9)",
+    "Overweight / Obesity I (25.0 to <35.0)",
+    "Obesity II (35.0 to <40.0)",
     "Obesity III (≥40.0)"
   ),
   facet_prefix = "Baseline BMI\n"
@@ -7618,7 +8599,6 @@ fwrite(
 # SFig2. Biochemistry and weight change relationship forest plot
 ################################################################################ 
 
-Run linear regression models and export outputs
 ```{r}
 #------------------------------------------------------------------------------#
 # Run adjusted linear models for 6m change (6m - 0m)
@@ -7643,9 +8623,11 @@ digits_p   <- 3
 fmt_p <- function(p) {
   ifelse(
     is.na(p), NA_character_,
-    ifelse(p < 10^(-digits_p),
-           paste0("<", formatC(10^(-digits_p), format = "f", digits = digits_p)),
-           formatC(p, format = "f", digits = digits_p))
+    ifelse(
+      p < 10^(-digits_p),
+      paste0("P < ", formatC(10^(-digits_p), format = "f", digits = digits_p)),
+      paste0("P = ", formatC(p, format = "f", digits = digits_p))
+    )
   )
 }
 
@@ -7668,7 +8650,7 @@ extract_wt_coef <- function(fit, term = "wt_change_kg_06m", scale = 1) {
     estimate = est,
     se       = se,
     t_value  = t,
-    p_value  = p,
+    p_raw    = p,
     ci_low   = unname(ci[1]),
     ci_high  = unname(ci[2])
   )
@@ -7707,44 +8689,53 @@ sfig2_bio_wt_tab <- rbindlist(lapply(names(outcomes), function(out_nm) {
       outcome = out_nm,
       outcome_change_var = chg,
       n = stats::nobs(fit),
-      estimate = NA_character_,
-      se       = NA_character_,
-      t_value  = NA_character_,
-      p_value  = NA_character_,
-      ci_low   = NA_character_,
-      ci_high  = NA_character_,
-      estimate_ci = NA_character_
+      estimate_num = NA_real_,
+      se_num       = NA_real_,
+      t_value_num  = NA_real_,
+      p_raw        = NA_real_,
+      ci_low_num   = NA_real_,
+      ci_high_num  = NA_real_
     ))
   }
-
-  # Format numbers
-  est_f <- formatC(res$estimate, format = "f", digits = digits_est)
-  se_f  <- formatC(res$se,       format = "f", digits = digits_est)
-  t_f   <- formatC(res$t_value,  format = "f", digits = digits_est)
-  lo_f  <- formatC(res$ci_low,   format = "f", digits = digits_est)
-  hi_f  <- formatC(res$ci_high,  format = "f", digits = digits_est)
-  p_f   <- fmt_p(res$p_value)
 
   data.table(
     outcome = out_nm,
     outcome_change_var = chg,
     n = stats::nobs(fit),
-    estimate = est_f,
-    se       = se_f,
-    t_value  = t_f,
-    p_value  = p_f,
-    ci_low   = lo_f,
-    ci_high  = hi_f,
-    estimate_ci = paste0(est_f, " (", lo_f, ", ", hi_f, ")")
+    estimate_num = res$estimate,
+    se_num       = res$se,
+    t_value_num  = res$t_value,
+    p_raw        = res$p_raw,
+    ci_low_num   = res$ci_low,
+    ci_high_num  = res$ci_high
   )
 }), use.names = TRUE, fill = TRUE)
+
+#------------------------------------------------------------------------------#
+# Apply FDR adjustment across the 5 biochemistry outcome models
+
+sfig2_bio_wt_tab[, p_fdr := p.adjust(p_raw, method = "BH")]
+
+#------------------------------------------------------------------------------#
+# Format numbers after FDR adjustment
+
+sfig2_bio_wt_tab[, `:=`(
+  estimate = formatC(estimate_num, format = "f", digits = digits_est),
+  se       = formatC(se_num,       format = "f", digits = digits_est),
+  t_value  = formatC(t_value_num,  format = "f", digits = digits_est),
+  ci_low   = formatC(ci_low_num,   format = "f", digits = digits_est),
+  ci_high  = formatC(ci_high_num,  format = "f", digits = digits_est),
+  p_value  = fmt_p(p_raw),
+  p_fdr_fmt = fmt_p(p_fdr)
+)]
+
+sfig2_bio_wt_tab[, estimate_ci := paste0(estimate, " (", ci_low, ", ", ci_high, ")")]
 
 # View outputs
 sfig2_bio_wt_tab
 
 # Check models for confirmation
 lapply(sfig2_bio_wt_models, broom::tidy)
-
 ```
 
 Convert table into forest plot
@@ -7772,25 +8763,27 @@ fplot_tab_raw <- copy(sfig2_bio_wt_tab)
 fplot_tab <- copy(fplot_tab_raw)
 
 fplot_tab[, ` ` := strrep(" ", 75)]     # forestploter draws here
-fplot_tab[, N   := fifelse(is.na(estimate), "", as.character(n))]
+fplot_tab[, N   := fifelse(is.na(estimate_num), "", as.character(n))]
 
 # Ensure character columns are not NA
 fplot_tab[is.na(estimate_ci), estimate_ci := ""]
 fplot_tab[is.na(p_value),     p_value     := ""]
+fplot_tab[is.na(p_fdr_fmt),   p_fdr_fmt   := ""]
 
 fplot_tab <- fplot_tab[, .(
-  Outcome        = outcome_label,
+  Outcome              = outcome_label,
   ` `,                                 # CI column
   N,
-  `Estimate (95% CI)` = estimate_ci,
-  `P Value`       = p_value
+  `Estimate (95% CI)`   = estimate_ci,
+  `Unadj. P Value`      = p_value,
+  `FDR-adj. P Value`    = p_fdr_fmt
 )]
 
 #-----------------------------#
 # Insert spacer rows (blank lines) to increase vertical spacing
 
 # Add a spacer after every plotted row EXCEPT the last
-keep_idx <- which(!is.na(fplot_tab_raw$estimate))
+keep_idx <- which(!is.na(fplot_tab_raw$estimate_num))
 
 # Indices to insert: after each kept row except the last
 insert_after <- keep_idx[-length(keep_idx)]
@@ -7803,19 +8796,20 @@ expanded_idx <- unlist(lapply(seq_len(nrow(fplot_tab_raw)), function(i) {
 # Expand numeric raw table (for est/lower/upper alignment)
 fplot_tab_raw_sp <- fplot_tab_raw[expanded_idx]
 fplot_tab_raw_sp[is.na(expanded_idx), `:=`(
-  estimate = NA_real_,
-  ci_low   = NA_real_,
-  ci_high  = NA_real_
+  estimate_num = NA_real_,
+  ci_low_num   = NA_real_,
+  ci_high_num  = NA_real_
 )]
 
 # Expand display table (table rows)
 fplot_tab_sp <- fplot_tab[expanded_idx]
 fplot_tab_sp[is.na(expanded_idx), `:=`(
-  Outcome = "",
-  ` `     = "",   # CI column
-  N       = "",
-  `Estimate (95% CI)` = "",
-  `P Value` = ""
+  Outcome              = "",
+  ` `                  = "",   # CI column
+  N                    = "",
+  `Estimate (95% CI)`   = "",
+  `Unadj. P Value`      = "",
+  `FDR-adj. P Value`    = ""
 )]
 
 # Overwrite objects used downstream
@@ -7828,20 +8822,21 @@ fplot_tab     <- fplot_tab_sp
 # Prepend one blank row to the numeric table (keeps est/lower/upper aligned)
 blank_raw <- fplot_tab_raw[0][1]
 blank_raw[1, `:=`(
-  estimate = NA_real_,
-  ci_low   = NA_real_,
-  ci_high  = NA_real_
+  estimate_num = NA_real_,
+  ci_low_num   = NA_real_,
+  ci_high_num  = NA_real_
 )]
 fplot_tab_raw <- rbind(blank_raw, fplot_tab_raw, fill = TRUE)
 
 # Prepend one blank row to the display table
 blank_disp <- fplot_tab[0][1]
 blank_disp[1, `:=`(
-  Outcome = "",
-  ` `     = "",
-  N       = "",
-  `Estimate (95% CI)` = "",
-  `P Value` = ""
+  Outcome              = "",
+  ` `                  = "",
+  N                    = "",
+  `Estimate (95% CI)`   = "",
+  `Unadj. P Value`      = "",
+  `FDR-adj. P Value`    = ""
 )]
 fplot_tab <- rbind(blank_disp, fplot_tab, fill = TRUE)
 
@@ -7861,8 +8856,8 @@ tm <- forest_theme(
 )
 
 # X-axis limits/ticks based on numeric CI ranges
-x_min <- as.numeric(min(fplot_tab_raw$ci_low,  na.rm = TRUE))
-x_max <- as.numeric(max(fplot_tab_raw$ci_high, na.rm = TRUE))
+x_min <- as.numeric(min(fplot_tab_raw$ci_low_num,  na.rm = TRUE))
+x_max <- as.numeric(max(fplot_tab_raw$ci_high_num, na.rm = TRUE))
 pad   <- 0.10 * (x_max - x_min)
 xlim  <- c(x_min - pad, x_max + pad)
 ticks_at <- pretty(xlim, n = 4)
@@ -7871,9 +8866,9 @@ ticks_at <- ticks_at[ticks_at >= xlim[1] & ticks_at <= xlim[2]]
 # Forest plot (ref_line = 0 for LM coefficient null)
 sfig2_bio_wt_fplot <- forest(
   data       = fplot_tab,
-  est        = as.numeric(fplot_tab_raw$estimate),
-  lower      = as.numeric(fplot_tab_raw$ci_low),
-  upper      = as.numeric(fplot_tab_raw$ci_high),
+  est        = as.numeric(fplot_tab_raw$estimate_num),
+  lower      = as.numeric(fplot_tab_raw$ci_low_num),
+  upper      = as.numeric(fplot_tab_raw$ci_high_num),
   ci_column  = which(names(fplot_tab) == " "),
   ref_line   = 0,
   xlab       = "Estimated outcome change per 10 kg change in weight",
@@ -7968,6 +8963,11 @@ dev.off()
 
 The plot will be artificially low before week 8 as we defined attrition as no subsequent prescription past 9 weeks.
 
+Note:
+For p-values, the FDR adjustment has been applied across all non-reference
+category comparisons shown in the mutually adjusted Cox regression output
+using the Benjamini-Hochberg procedure.
+
 Cox regression and output extraction
 ```{r}
 #------------------------------------------------------------------------------#
@@ -7999,9 +8999,9 @@ table(data_attr_km$attr_wk, useNA = "always")
 # Lock factor order and set reference groups
 data_attr_km[, age_cat5 := factor(
   age_cat5,
-  levels = c("18–29", "30–39", "40–49", "50–59", "60–79")
+  levels = c("18 to <30","30 to <40","40 to <50","50 to <60","60 to <80")
 )]
-data_attr_km[, age_cat5 := relevel(age_cat5, ref = "18–29")]
+data_attr_km[, age_cat5 := relevel(age_cat5, ref = "18 to <30")]
 
 data_attr_km[, area_imd_qt := factor(
   area_imd_qt,
@@ -8017,7 +9017,7 @@ data_attr_km[, eth_bin := relevel(eth_bin, ref = "White")]
 
 data_attr_km[, wt_kg_0m_cat := factor(
   wt_kg_0m_cat,
-  levels = c("<90 kg", "90–99 kg", "100–109 kg", "110–119 kg", "≥120 kg")
+  levels = c("<90 kg", "90 to <100 kg", "100 to <110 kg", "110 to <120 kg", "≥120 kg")
 )]
 data_attr_km[, wt_kg_0m_cat := relevel(wt_kg_0m_cat, ref = "≥120 kg")]
 
@@ -8057,6 +9057,10 @@ cox_hr_dt <- function(fit, digits = 2, p_digits = 3) {
     all = TRUE
   )
 
+  # Apply Benjamini-Hochberg FDR correction across all non-reference
+  # Cox model coefficients shown in the supplementary figure
+  out[, p_fdr := p.adjust(p_value, method = "BH")]
+
   # Format strings for display under KM curves
   out[, hr_ci := sprintf(
     paste0("%.", digits, "f (%.", digits, "f–%.", digits, "f)"),
@@ -8069,8 +9073,14 @@ cox_hr_dt <- function(fit, digits = 2, p_digits = 3) {
             formatC(p_value, format = "f", digits = p_digits))
   )]
 
+  out[, p_fdr_fmt := fifelse(
+    is.na(p_fdr), NA_character_,
+    fifelse(p_fdr < 10^(-p_digits), paste0("<", formatC(10^(-p_digits), format = "f", digits = p_digits)),
+            formatC(p_fdr, format = "f", digits = p_digits))
+  )]
+
   # Keep clean columns
-  out[, .(term, hr, ci_low, ci_high, hr_ci, p_value, p_value_fmt)]
+  out[, .(term, hr, ci_low, ci_high, hr_ci, p_value, p_fdr, p_value_fmt, p_fdr_fmt)]
 }
 
 # Extract full cox regression results
@@ -8079,30 +9089,36 @@ hr_all <- cox_hr_dt(cox_attr)
 # Split into panel tables + pretty subgroup labels
 hr_age <- hr_all[grepl("^age_cat5", term)]
 hr_age[, subgroup := sub("^age_cat5", "", term)]
-hr_age <- hr_age[, .(subgroup, hr_ci, p_value_fmt)]
+hr_age <- hr_age[, .(subgroup, hr_ci, p_value_fmt, p_fdr_fmt)]
 
 hr_imd <- hr_all[grepl("^area_imd_qt", term)]
 hr_imd[, subgroup := sub("^area_imd_qt", "", term)]
-hr_imd <- hr_imd[, .(subgroup, hr_ci, p_value_fmt)]
+hr_imd <- hr_imd[, .(subgroup, hr_ci, p_value_fmt, p_fdr_fmt)]
 
 hr_eth <- hr_all[grepl("^eth_bin", term)]
 hr_eth[, subgroup := sub("^eth_bin", "", term)]
-hr_eth <- hr_eth[, .(subgroup, hr_ci, p_value_fmt)]
+hr_eth <- hr_eth[, .(subgroup, hr_ci, p_value_fmt, p_fdr_fmt)]
 
 hr_wt <- hr_all[grepl("^wt_kg_0m_cat", term)]
 hr_wt[, subgroup := sub("^wt_kg_0m_cat", "", term)]
-hr_wt <- hr_wt[, .(subgroup, hr_ci, p_value_fmt)]
+hr_wt <- hr_wt[, .(subgroup, hr_ci, p_value_fmt, p_fdr_fmt)]
 
 # Helper function: add reference rows to tables
 add_ref_row <- function(dt, ref_label) {
   rbind(
-    data.table(subgroup = paste0(ref_label), hr_ci = "1.00 (ref)", p_value_fmt = NA_character_),
-    dt
+    data.table(
+      subgroup = paste0(ref_label),
+      hr_ci = "1.00 (ref)",
+      p_value_fmt = NA_character_,
+      p_fdr_fmt = NA_character_
+    ),
+    dt,
+    fill = TRUE
   )
 }
 
 # Assign reference rows to all tables
-hr_age <- add_ref_row(hr_age, "18–29")
+hr_age <- add_ref_row(hr_age, "18 to <30")
 hr_imd <- add_ref_row(hr_imd, "1 (Most Deprived)")
 hr_eth <- add_ref_row(hr_eth, "White")
 hr_wt  <- add_ref_row(hr_wt,  "≥120 kg")
@@ -8111,7 +9127,7 @@ hr_wt  <- add_ref_row(hr_wt,  "≥120 kg")
 ## Age
 hr_age[, subgroup := factor(
   subgroup,
-  levels = c("18–29", "30–39", "40–49", "50–59", "60–79")
+  levels = c("18 to <30","30 to <40","40 to <50","50 to <60","60 to <80")
 )]
 setorder(hr_age, subgroup)
 hr_age[, subgroup := as.character(subgroup)]
@@ -8132,23 +9148,22 @@ hr_eth[, subgroup := as.character(subgroup)]
 ## Baseline weight
 hr_wt[, subgroup := factor(
   subgroup,
-  levels = c("<90 kg", "90–99 kg", "100–109 kg", "110–119 kg", "≥120 kg")
+  levels = c("<90 kg", "90 to <100 kg", "100 to <110 kg", "110 to <120 kg", "≥120 kg")
 )]
 setorder(hr_wt, subgroup)
 hr_wt[, subgroup := as.character(subgroup)]
 
 # Blank out NA values in reference categories
-hr_age[is.na(p_value_fmt), p_value_fmt := ""]
-hr_imd[is.na(p_value_fmt), p_value_fmt := ""]
-hr_eth[is.na(p_value_fmt), p_value_fmt := ""]
-hr_wt [is.na(p_value_fmt), p_value_fmt := ""]
+hr_age[is.na(p_value_fmt), `:=`(p_value_fmt = "", p_fdr_fmt = "")]
+hr_imd[is.na(p_value_fmt), `:=`(p_value_fmt = "", p_fdr_fmt = "")]
+hr_eth[is.na(p_value_fmt), `:=`(p_value_fmt = "", p_fdr_fmt = "")]
+hr_wt [is.na(p_value_fmt), `:=`(p_value_fmt = "", p_fdr_fmt = "")]
 
 # Check tables
 hr_age
 hr_imd
 hr_eth
 hr_wt
-
 ```
 
 a) Full sample
@@ -8225,7 +9240,7 @@ data_attr_km[
   ,
   age_cat5 := factor(
     age_cat5,
-    levels = c("18–29", "30–39", "40–49", "50–59", "60–79")
+    levels = c("18 to <30","30 to <40","40 to <50","50 to <60","60 to <80")
   )
 ]
 
@@ -8250,7 +9265,7 @@ sfig3b_km_attr_age <- ggsurvplot(
   xlab                = "Weeks Since GLP-1 Initiation",
   ylab                = "Proportion of Patients (%)",
   break.time.by       = 2,
-  legend.labs         = c("18–29", "30–39", "40–49", "50–59", "60–79"),
+  legend.labs         = c("18 to <30","30 to <40","40 to <50","50 to <60","60 to <80"),
   palette             = age_cols
 )
 
@@ -8275,7 +9290,8 @@ sfig3b_hr_age <- hr_age[
   .(
     `Age Group` = subgroup,
     `HR (95% CI)` = hr_ci,
-    `P Value` = p_value_fmt
+    `Unadj. P` = p_value_fmt,
+    `FDR-adj. P` = p_fdr_fmt
   )
 ]
 
@@ -8341,7 +9357,7 @@ sfig3b_hr_age <- gtable::gtable_add_rows(
 
 # Change grob table width
 sfig3b_hr_age$widths <- grid::unit(
-  c(0.28, 0.44, 0.28),
+  c(0.24, 0.31, 0.16, 0.29),
   "npc"
 )
 
@@ -8418,7 +9434,8 @@ sfig3c_hr_imd <- hr_imd[
   .(
     `IMD Quintile` = subgroup,
     `HR (95% CI)` = hr_ci,
-    `P Value` = p_value_fmt
+    `Unadj. P` = p_value_fmt,
+    `FDR-adj. P` = p_fdr_fmt
   )
 ]
 
@@ -8484,7 +9501,7 @@ sfig3c_hr_imd <- gtable::gtable_add_rows(
 
 # Change grob table width
 sfig3c_hr_imd$widths <- grid::unit(
-  c(0.28, 0.44, 0.28),
+  c(0.24, 0.31, 0.16, 0.29),
   "npc"
 )
 
@@ -8561,7 +9578,8 @@ sfig3d_hr_eth <- hr_eth[
   .(
     `Ethnicity` = subgroup,
     `HR (95% CI)` = hr_ci,
-    `P Value` = p_value_fmt
+    `Unadj. P` = p_value_fmt,
+    `FDR-adj. P` = p_fdr_fmt
   )
 ]
 
@@ -8627,7 +9645,7 @@ sfig3d_hr_eth <- gtable::gtable_add_rows(
 
 # Change grob table width
 sfig3d_hr_eth$widths <- grid::unit(
-  c(0.28, 0.44, 0.28),
+  c(0.24, 0.31, 0.16, 0.29),
   "npc"
 )
 
@@ -8654,7 +9672,7 @@ data_attr_km[
   ,
   wt_kg_0m_cat := factor(
     wt_kg_0m_cat,
-    levels = c("<90 kg", "90–99 kg", "100–109 kg", "110–119 kg", "≥120 kg")
+    levels = c("<90 kg", "90 to <100 kg", "100 to <110 kg", "110 to <120 kg", "≥120 kg")
   )
 ]
 
@@ -8675,7 +9693,7 @@ sfig3e_km_attr_wtgrp <- ggsurvplot(
   xlab                = "Weeks Since GLP-1 Initiation",
   ylab                = "Proportion of Patients (%)",
   break.time.by       = 2,
-  legend.labs         = c("<90 kg", "90–99 kg", "100–109 kg", "110–119 kg", "≥120 kg"),
+  legend.labs         = c("<90 kg", "90 to <100 kg", "100 to <110 kg", "110 to <120 kg", "≥120 kg"),
   palette             = wt_cols
 )
 
@@ -8700,7 +9718,8 @@ sfig3e_hr_wtgrp <- hr_wt[
   .(
     `Baseline Weight` = subgroup,
     `HR (95% CI)` = hr_ci,
-    `P Value` = p_value_fmt
+    `Unadj. P` = p_value_fmt,
+    `FDR-adj. P` = p_fdr_fmt
   )
 ]
 
@@ -8766,7 +9785,7 @@ sfig3e_hr_wtgrp <- gtable::gtable_add_rows(
 
 # Change grob table width
 sfig3e_hr_wtgrp$widths <- grid::unit(
-  c(0.28, 0.44, 0.28),
+  c(0.24, 0.31, 0.16, 0.29),
   "npc"
 )
 
@@ -8962,7 +9981,7 @@ data_sdeff_sub[is.na(sdeff_total_n), sdeff_total_n := 0L]
 
 data_sdeff_sub[, age_cat5 := factor(
   age_cat5,
-  levels = c("18–29","30–39","40–49","50–59","60–79")
+  levels = c("18 to <30","30 to <40","40 to <50","50 to <60","60 to <80")
 )]
 
 data_sdeff_sub[, area_imd_qt := factor(
@@ -8977,7 +9996,7 @@ data_sdeff_sub[, area_imd_qt := factor(
 
 data_sdeff_sub[, wt_kg_0m_cat := factor(
   wt_kg_0m_cat,
-  levels = c("<90 kg", "90–99 kg", "100–109 kg", "110–119 kg", "≥120 kg")
+  levels = c("<90 kg", "90 to <100 kg", "100 to <110 kg", "110 to <120 kg", "≥120 kg")
 )]
 
 
@@ -9669,6 +10688,11 @@ ggsave(
 # SFig6. Average dosage trajectories subgroup stratified
 ################################################################################ 
 
+Note:
+For p-values, the FDR adjustment has been applied across the 4 subgroup tests
+within each drug-specific set of dose trajectory plots using the
+Benjamini-Hochberg procedure.
+
 ```{r}
 #------------------------------------------------------------------------------
 # Mean dose trajectory plots (subgroup stratified) — 4 panels total
@@ -9706,6 +10730,7 @@ setorder(dose_long, drug, glp1_idx)
 #------------------------------------------------------------------------------
 # Helper functions (p-value at week 26 via partial F-test + panel builder)
 
+# Helper function: palette selection
 get_pal <- function(k) {
   if (!exists("pal_custom_5")) stop("pal_custom_5 not found.")
   pal <- pal_custom_5
@@ -9713,6 +10738,19 @@ get_pal <- function(k) {
   pal[seq_len(k)]
 }
 
+# Helper function: format p-values consistently for plot subtitles and reference table
+format_pval_sfig6 <- function(p, p_digits = 3) {
+  fifelse(
+    is.na(p), NA_character_,
+    fifelse(
+      p < 10^(-p_digits),
+      paste0("<", formatC(10^(-p_digits), format = "f", digits = p_digits)),
+      formatC(p, format = "f", digits = p_digits)
+    )
+  )
+}
+
+# Helper function: perform partial F test
 pf_dose_26 <- function(dt, subgroup_var) {
   d26 <- dt[glp1_idx == 26 & !is.na(get(subgroup_var)) & is.finite(dose_mg)]
   if (nrow(d26) < 3) return(NA_real_)
@@ -9722,8 +10760,56 @@ pf_dose_26 <- function(dt, subgroup_var) {
   as.numeric(anova(lm0, lm1)$`Pr(>F)`[2])
 }
 
+# Helper function: calculate unadjusted and FDR-adjusted p-values for each drug
+dose_p_tbl_for_drug <- function(dt) {
+  out <- data.table(
+    subgroup_var = c("wt_kg_0m_cat", "age_cat5", "area_imd_qt", "eth_bin"),
+    subgroup_lab = c("Baseline Weight", "Age Group", "IMD Quintile", "Ethnicity"),
+    p_value = c(
+      pf_dose_26(dt[!is.na(wt_kg_0m_cat)], "wt_kg_0m_cat"),
+      pf_dose_26(dt[!is.na(age_cat5)], "age_cat5"),
+      pf_dose_26(dt[!is.na(area_imd_qt)], "area_imd_qt"),
+      pf_dose_26(dt[!is.na(eth_bin)], "eth_bin")
+    )
+  )
+
+  # Apply Benjamini-Hochberg FDR correction across the 4 subgroup tests
+  out[, p_fdr := p.adjust(p_value, method = "BH")]
+
+  # Format p-values for checking and plotting
+  out[, p_value_fmt := format_pval_sfig6(p_value)]
+  out[, p_fdr_fmt  := format_pval_sfig6(p_fdr)]
+
+  out
+}
+
+# Create and export p-value reference table before plotting
+sfig6_dose_p_tbl <- rbindlist(
+  lapply(c("Mounjaro", "Wegovy"), function(drug_name) {
+    tmp <- dose_p_tbl_for_drug(dose_long[drug == drug_name])
+    tmp[, drug := drug_name]
+    tmp
+  }),
+  use.names = TRUE,
+  fill = TRUE
+)
+
+setcolorder(
+  sfig6_dose_p_tbl,
+  c("drug", "subgroup_var", "subgroup_lab", "p_value", "p_fdr", "p_value_fmt", "p_fdr_fmt")
+)
+
+# Check p-values directly
+sfig6_dose_p_tbl
+
+# Export reference table
+fwrite(
+  sfig6_dose_p_tbl,
+  "Final Outputs/sfig6-dose-subgrp-pvalues.csv"
+)
+
 make_dose_panel <- function(dt, subgroup_var, subgroup_lab, pal_vec,
-                            panel_title, show_x = FALSE) {
+                            panel_title, p_tbl, show_x = FALSE) {
 
   # Preserve factor ordering if present
   if (is.factor(dt[[subgroup_var]])) {
@@ -9741,7 +10827,9 @@ make_dose_panel <- function(dt, subgroup_var, subgroup_lab, pal_vec,
   ][order(glp1_idx, grp)]
 
   # p-value
-  p <- pf_dose_26(dt, subgroup_var)
+  subgroup_var_lookup <- subgroup_var
+  p_fmt     <- p_tbl[subgroup_var == subgroup_var_lookup, p_value_fmt]
+  p_fdr_fmt <- p_tbl[subgroup_var == subgroup_var_lookup, p_fdr_fmt]
 
   # Main plot
   p_main <- ggplot(
@@ -9754,13 +10842,19 @@ make_dose_panel <- function(dt, subgroup_var, subgroup_lab, pal_vec,
       y = "Mean Dose (mg)",
       title = panel_title,
       subtitle = paste0(
-        "P for difference between ", tolower(subgroup_lab), " groups at 6 months: ",
-        ifelse(is.na(p), "NA", format_pval(p))
+        "Unadjusted P Value for difference across ", tolower(subgroup_lab), " at 6 months: ",
+        ifelse(is.na(p_fmt), "NA", p_fmt),
+        "\nFDR-adj. P Value for difference across ", tolower(subgroup_lab), " at 6 months: ",
+        ifelse(is.na(p_fdr_fmt), "NA", p_fdr_fmt)
       ),
       colour = subgroup_lab
     ) +
     fig_theme +
     theme(
+      plot.subtitle = element_text(
+        lineheight = 1.35,
+        margin = margin(t = 4, b = 12)
+      ),
       axis.title.y = element_text(size = 11),
       axis.text.x  = element_text(size = 9),
       axis.ticks.x = element_line(linewidth = 0.4)
@@ -9817,6 +10911,9 @@ make_dose_panel <- function(dt, subgroup_var, subgroup_lab, pal_vec,
 build_4_for_drug <- function(drug_name, show_x_last_row = TRUE) {
   dt <- dose_long[drug == drug_name]
 
+  # Use exported/reference p-value table for unadjusted and FDR-adjusted p-values
+  p_tbl <- sfig6_dose_p_tbl[drug == drug_name]
+
   # palettes sized to each subgroup
   pal_wtgrp <- get_pal(length(levels(factor(dt$wt_kg_0m_cat))))
   pal_age   <- get_pal(length(levels(factor(dt$age_cat5))))
@@ -9829,6 +10926,7 @@ build_4_for_drug <- function(drug_name, show_x_last_row = TRUE) {
     panel_title = paste0(
       #drug_name,  # drug name removed as only mounjaro showed (add ": " if needed)
       "Stratified by Baseline Weight"),
+    p_tbl = p_tbl,
     show_x = FALSE
   )
 
@@ -9838,6 +10936,7 @@ build_4_for_drug <- function(drug_name, show_x_last_row = TRUE) {
     panel_title = paste0(
       #drug_name,  # drug name removed as only mounjaro showed (add ": " if needed)
       "Stratified by Age Group"),
+    p_tbl = p_tbl,
     show_x = FALSE
   )
 
@@ -9847,6 +10946,7 @@ build_4_for_drug <- function(drug_name, show_x_last_row = TRUE) {
     panel_title = paste0(
       #drug_name,  # drug name removed as only mounjaro showed (add ": " if needed)
       "Stratified by IMD Quintiles"),
+    p_tbl = p_tbl,
     show_x = FALSE
   )
 
@@ -9856,6 +10956,7 @@ build_4_for_drug <- function(drug_name, show_x_last_row = TRUE) {
     panel_title = paste0(
       #drug_name,  # drug name removed as only mounjaro showed (add ": " if needed)
       "Stratified by Ethnicity"),
+    p_tbl = p_tbl,
     show_x = show_x_last_row
   )
 
