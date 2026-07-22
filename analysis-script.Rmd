@@ -79,7 +79,7 @@ pacman::p_load(
   # For data wrangling & cleaning
   tidyverse, data.table, lubridate, janitor, glue, tictoc, tools, broom,
   # For summarising data
-  skimr, table1, htmltools, gt,
+  skimr, table1, htmltools, gt, hmisc,
   # For plotting
   zoo, ggplot2, ggh4x, patchwork, paletteer, cowplot, scales, ggbreak,
   grid, gridExtra, gtable, stringr, forestploter, tidytext, ggalluvial,
@@ -98,9 +98,9 @@ here()                                    # checks that the wd has been set
 
 # Read in cleaned datasets
 ## Main analysis dataset
-data_raw <- fread("data_clean.csv")
+data_raw <- fread("Clean Data/data-p1-s2/data_clean.csv")
 ## Supplementary signup dataset with full sample
-data_signup <- fread("data_signup.csv")
+data_signup <- fread("Clean Data/data-p1-s2/data_signup.csv")
 
 # Restrict to first 6 months of follow-up (weeks 0-26)
 data <- data_raw[glp1_idx >= 0 & glp1_idx <= 26]
@@ -3379,7 +3379,8 @@ Notes:
 - FDR adjustment is applied separately across:
   (1) the 6 main blood-test outcome rows   
   (2) the 3 baseline HbA1c category-specific rows
-- All other figures remain descriptive complete-case plots of observed data
+- All other figures remain descriptive complete-case plots of observed data,
+  as applying IP weighting there may get a bit confusing.
 
 Readability note:
 - The code is organised into two main parts: first, helper functions that estimate
@@ -3562,21 +3563,86 @@ create_ipw_missing_indicator_covariates <- function(analysis_data, candidate_ipw
 # number of very large weights. The effective sample size (ESS) is especially
 # useful: a much smaller ESS after weighting indicates unstable weights.
 
-summarise_ipw_weight_distribution <- function(observed_weighted_data, raw_w = "ipw") {
+#------------------------------------------------------------------------------#
+# Helper function: summarise IPW weights for diagnostics
+
+summarise_ipw_weight_distribution <- function(
+    observed_weighted_data,
+    raw_w = "ipw"
+) {
 
   data.table(
-    ipw_raw_mean = mean(observed_weighted_data[[raw_w]], na.rm = TRUE),
-    ipw_raw_sd = sd(observed_weighted_data[[raw_w]], na.rm = TRUE),
-    ipw_raw_min = min(observed_weighted_data[[raw_w]], na.rm = TRUE),
-    ipw_raw_p01 = as.numeric(quantile(observed_weighted_data[[raw_w]], 0.01, na.rm = TRUE, type = 7)),
-    ipw_raw_p05 = as.numeric(quantile(observed_weighted_data[[raw_w]], 0.05, na.rm = TRUE, type = 7)),
-    ipw_raw_p50 = as.numeric(quantile(observed_weighted_data[[raw_w]], 0.50, na.rm = TRUE, type = 7)),
-    ipw_raw_p95 = as.numeric(quantile(observed_weighted_data[[raw_w]], 0.95, na.rm = TRUE, type = 7)),
-    ipw_raw_p99 = as.numeric(quantile(observed_weighted_data[[raw_w]], 0.99, na.rm = TRUE, type = 7)),
-    ipw_raw_max = max(observed_weighted_data[[raw_w]], na.rm = TRUE),
+    ipw_raw_mean = mean(
+      observed_weighted_data[[raw_w]],
+      na.rm = TRUE
+    ),
 
-    ipw_ess_raw = (sum(observed_weighted_data[[raw_w]], na.rm = TRUE)^2) /
-      sum(observed_weighted_data[[raw_w]]^2, na.rm = TRUE)
+    ipw_raw_sd = sd(
+      observed_weighted_data[[raw_w]],
+      na.rm = TRUE
+    ),
+
+    ipw_raw_min = min(
+      observed_weighted_data[[raw_w]],
+      na.rm = TRUE
+    ),
+
+    ipw_raw_p05 = as.numeric(
+      quantile(
+        observed_weighted_data[[raw_w]],
+        probs = 0.05,
+        na.rm = TRUE,
+        type = 7
+      )
+    ),
+
+    ipw_raw_p25 = as.numeric(
+      quantile(
+        observed_weighted_data[[raw_w]],
+        probs = 0.25,
+        na.rm = TRUE,
+        type = 7
+      )
+    ),
+
+    ipw_raw_p50 = as.numeric(
+      quantile(
+        observed_weighted_data[[raw_w]],
+        probs = 0.50,
+        na.rm = TRUE,
+        type = 7
+      )
+    ),
+
+    ipw_raw_p75 = as.numeric(
+      quantile(
+        observed_weighted_data[[raw_w]],
+        probs = 0.75,
+        na.rm = TRUE,
+        type = 7
+      )
+    ),
+
+    ipw_raw_p95 = as.numeric(
+      quantile(
+        observed_weighted_data[[raw_w]],
+        probs = 0.95,
+        na.rm = TRUE,
+        type = 7
+      )
+    ),
+
+    ipw_raw_max = max(
+      observed_weighted_data[[raw_w]],
+      na.rm = TRUE
+    ),
+
+    ipw_ess_raw = (
+      sum(observed_weighted_data[[raw_w]], na.rm = TRUE)^2
+    ) / sum(
+      observed_weighted_data[[raw_w]]^2,
+      na.rm = TRUE
+    )
   )
 }
 
@@ -3666,6 +3732,7 @@ estimate_ipw_paired_change_row <- function(
       ipw_ci_low = NA_real_,
       ipw_ci_high = NA_real_,
       ipw_p_raw = NA_real_,
+      ipw_model_c_statistic = NA_real_,
       ipw_mean_weight = NA_real_,
       ipw_min_weight = NA_real_,
       ipw_max_weight = NA_real_
@@ -3765,6 +3832,7 @@ estimate_ipw_paired_change_row <- function(
       ipw_ci_low = NA_real_,
       ipw_ci_high = NA_real_,
       ipw_p_raw = NA_real_,
+      ipw_model_c_statistic = NA_real_,
       ipw_mean_weight = NA_real_,
       ipw_min_weight = NA_real_,
       ipw_max_weight = NA_real_
@@ -3863,6 +3931,14 @@ estimate_ipw_paired_change_row <- function(
     prob_observed := pmin(pmax(prob_observed, 1e-4), 1 - 1e-4)
   ]
 
+  # Calculate c-statistic for the observation model
+  ipw_model_c_statistic <- unname(
+    Hmisc::somers2(
+      ipw_model_data$prob_observed,
+      as.integer(ipw_model_data$observed_analysis)
+    )["C"]
+  )
+
   # Replace outcome_population with the IPW model dataset so that no rows are lost through
   # complete-case restriction for missing covariates
   outcome_population <- ipw_model_data
@@ -3895,6 +3971,27 @@ estimate_ipw_paired_change_row <- function(
       !is.na(ipw) & is.finite(ipw) &
       !is.na(get(change_var)) & is.finite(get(change_var))
   ]
+  
+  #-----------------------------#
+  # Retain participant-level IPWs for diagnostic histograms
+
+  rtab7_ipw_weights_long <<- data.table::rbindlist(
+    list(
+      rtab7_ipw_weights_long,
+      observed_weighted_data[
+        ,
+        .(
+          subgroup_type_label = subgroup_type_label,
+          subgroup = subgroup,
+          measure = measure,
+          scale = scale,
+          ipw = ipw
+        )
+      ]
+    ),
+    use.names = TRUE,
+    fill = TRUE
+  )
 
   # Summarise raw weights for diagnostics
   ipw_weight_diagnostics <- summarise_ipw_weight_distribution(observed_weighted_data)
@@ -3950,6 +4047,8 @@ estimate_ipw_paired_change_row <- function(
     ipw_ci_high = ipw_ci_high,
     ipw_p_raw = ipw_p_raw,
 
+    ipw_model_c_statistic = ipw_model_c_statistic,
+
     ipw_mean_weight = mean(observed_weighted_data$ipw, na.rm = TRUE),
     ipw_min_weight = min(observed_weighted_data$ipw, na.rm = TRUE),
     ipw_max_weight = max(observed_weighted_data$ipw, na.rm = TRUE),
@@ -3971,6 +4070,11 @@ b) Build table
 #   1) the two primary weight outcomes,
 #   2) the six secondary blood-test outcomes,
 #   3) the three baseline HbA1c category-specific outcomes.
+
+#-----------------------------#
+# Store participant-level IPWs for diagnostic plots
+
+rtab7_ipw_weights_long <- data.table()
 
 #-----------------------------#
 # Primary weight outcomes
@@ -4236,14 +4340,16 @@ rtab7_ipw_weight_diagnostics <- rtab7_ipw_results[
     n_observed,
     pct_observed,
 
+    ipw_model_c_statistic,
+
     ipw_raw_mean,
     ipw_raw_sd,
     ipw_raw_min,
-    ipw_raw_p01,
     ipw_raw_p05,
+    ipw_raw_p25,
     ipw_raw_p50,
+    ipw_raw_p75,
     ipw_raw_p95,
-    ipw_raw_p99,
     ipw_raw_max,
 
     ipw_ess_raw,
@@ -4257,9 +4363,10 @@ rtab7_ipw_weight_diagnostics[
   ,
   c(
     "pct_observed",
-    "ipw_raw_mean", "ipw_raw_sd", "ipw_raw_min", "ipw_raw_p01",
-    "ipw_raw_p05", "ipw_raw_p50", "ipw_raw_p95", "ipw_raw_p99",
-    "ipw_raw_max",
+    "ipw_model_c_statistic",
+    "ipw_raw_mean", "ipw_raw_sd", "ipw_raw_min",
+    "ipw_raw_p05", "ipw_raw_p25", "ipw_raw_p50", "ipw_raw_p75",
+    "ipw_raw_p95", "ipw_raw_max",
     "ipw_ess_raw"
   ) := lapply(
     .SD,
@@ -4268,10 +4375,42 @@ rtab7_ipw_weight_diagnostics[
   ),
   .SDcols = c(
     "pct_observed",
-    "ipw_raw_mean", "ipw_raw_sd", "ipw_raw_min", "ipw_raw_p01",
-    "ipw_raw_p05", "ipw_raw_p50", "ipw_raw_p95", "ipw_raw_p99",
-    "ipw_raw_max",
+    "ipw_model_c_statistic",
+    "ipw_raw_mean", "ipw_raw_sd", "ipw_raw_min",
+    "ipw_raw_p05", "ipw_raw_p25", "ipw_raw_p50", "ipw_raw_p75",
+    "ipw_raw_p95", "ipw_raw_max",
     "ipw_ess_raw"
+  )
+]
+
+# Create formatted diagnostic columns
+rtab7_ipw_weight_diagnostics[
+  ,
+  `:=`(
+    ipw_c_statistic_fmt = ifelse(
+      is.na(ipw_model_c_statistic),
+      "",
+      sprintf("%.3f", ipw_model_c_statistic)
+    ),
+    ipw_mean_min_max = sprintf(
+      "%.3f (%.3f, %.3f)",
+      ipw_raw_mean,
+      ipw_raw_min,
+      ipw_raw_max
+    ),
+    ipw_percentiles = sprintf(
+      "%.3f, %.3f, %.3f, %.3f, %.3f",
+      ipw_raw_p05,
+      ipw_raw_p25,
+      ipw_raw_p50,
+      ipw_raw_p75,
+      ipw_raw_p95
+    ),
+    ipw_ess_fmt = ifelse(
+      is.na(ipw_ess_raw),
+      "",
+      format(round(ipw_ess_raw), big.mark = ",")
+    )
   )
 ]
 
@@ -4303,17 +4442,12 @@ rtab7_ipw_weight_diagnostics_html <- rtab7_ipw_weight_diagnostics |>
     n_observed = "Observed Pair N",
     pct_observed = "% Observed",
 
-    ipw_raw_mean = "Mean",
-    ipw_raw_sd = "SD",
-    ipw_raw_min = "Min",
-    ipw_raw_p01 = "P1",
-    ipw_raw_p05 = "P5",
-    ipw_raw_p50 = "Median",
-    ipw_raw_p95 = "P95",
-    ipw_raw_p99 = "P99",
-    ipw_raw_max = "Max",
+    ipw_c_statistic_fmt = "C-statistic",
 
-    ipw_ess_raw = "Raw ESS",
+    ipw_mean_min_max = "Mean (Min, Max)",
+    ipw_percentiles = "P5, P25, P50, P75, P95",
+
+    ipw_ess_fmt = "ESS",
     ipw_model_covars = "Model Covariates"
   ) |>
   cols_align(
@@ -4326,7 +4460,27 @@ rtab7_ipw_weight_diagnostics_html <- rtab7_ipw_weight_diagnostics |>
       n_population,
       n_observed,
       pct_observed,
-      ipw_raw_mean:ipw_ess_raw
+      ipw_c_statistic_fmt,
+      ipw_mean_min_max,
+      ipw_percentiles,
+      ipw_ess_fmt
+    )
+  ) |>
+  cols_hide(
+    columns = c(
+      ipw_model_c_statistic,
+
+      ipw_raw_mean,
+      ipw_raw_sd,
+      ipw_raw_min,
+      ipw_raw_p05,
+      ipw_raw_p25,
+      ipw_raw_p50,
+      ipw_raw_p75,
+      ipw_raw_p95,
+      ipw_raw_max,
+
+      ipw_ess_raw
     )
   ) |>
   tab_spanner(
@@ -4334,26 +4488,20 @@ rtab7_ipw_weight_diagnostics_html <- rtab7_ipw_weight_diagnostics |>
     columns = c(n_population, n_observed, pct_observed)
   ) |>
   tab_spanner(
+    label = "Observation Model",
+    columns = c(ipw_c_statistic_fmt)
+  ) |>
+  tab_spanner(
     label = "Stabilised Weights",
-    columns = c(
-      ipw_raw_mean,
-      ipw_raw_sd,
-      ipw_raw_min,
-      ipw_raw_p01,
-      ipw_raw_p05,
-      ipw_raw_p50,
-      ipw_raw_p95,
-      ipw_raw_p99,
-      ipw_raw_max
-    )
+    columns = c(ipw_mean_min_max, ipw_percentiles)
   ) |>
   tab_spanner(
     label = "Effective Sample Size",
-    columns = c(ipw_ess_raw)
+    columns = c(ipw_ess_fmt)
   ) |>
   tab_source_note(
     source_note = md(
-      "ESS = effective sample size. Stabilised weights were calculated as the marginal probability of having observed complete paired outcome data divided by the predicted probability of having observed complete paired outcome data. Missing covariate values were handled using a missing-indicator method."
+      "ESS = effective sample size. The c-statistic describes discrimination of the outcome-observation model. Stabilised weights were calculated as the marginal probability of having observed complete paired outcome data divided by the predicted probability of having observed complete paired outcome data. Stabilised weights are presented as the mean (minimum, maximum) and the 5th, 25th, 50th, 75th and 95th percentiles. Missing covariate values were handled using a missing-indicator method."
     )
   ) |>
   tab_options(
@@ -4395,6 +4543,17 @@ rtab7_ipw_results[
     ipw_ci_low = round(ipw_ci_low, 2),
     ipw_ci_high = round(ipw_ci_high, 2),
 
+    ipw_model_c_statistic = round(ipw_model_c_statistic, 3),
+
+    ipw_raw_mean = round(ipw_raw_mean, 3),
+    ipw_raw_min = round(ipw_raw_min, 3),
+    ipw_raw_p05 = round(ipw_raw_p05, 3),
+    ipw_raw_p25 = round(ipw_raw_p25, 3),
+    ipw_raw_p50 = round(ipw_raw_p50, 3),
+    ipw_raw_p75 = round(ipw_raw_p75, 3),
+    ipw_raw_p95 = round(ipw_raw_p95, 3),
+    ipw_raw_max = round(ipw_raw_max, 3),
+
     ipw_mean_weight = round(ipw_mean_weight, 2),
     ipw_min_weight = round(ipw_min_weight, 2),
     ipw_max_weight = round(ipw_max_weight, 2)
@@ -4416,6 +4575,25 @@ rtab7_ipw_results[
     cc_p_fdr_fmt = format_p_value_rtab7(cc_p_fdr),
     ipw_p_raw_fmt = format_p_value_rtab7(ipw_p_raw),
     ipw_p_fdr_fmt = format_p_value_rtab7(ipw_p_fdr),
+    ipw_c_statistic_fmt = ifelse(
+      is.na(ipw_model_c_statistic),
+      "",
+      sprintf("%.3f", ipw_model_c_statistic)
+    ),
+    ipw_mean_min_max = sprintf(
+      "%.3f (%.3f, %.3f)",
+      ipw_raw_mean,
+      ipw_raw_min,
+      ipw_raw_max
+    ),
+    ipw_percentiles = sprintf(
+      "%.3f, %.3f, %.3f, %.3f, %.3f",
+      ipw_raw_p05,
+      ipw_raw_p25,
+      ipw_raw_p50,
+      ipw_raw_p75,
+      ipw_raw_p95
+    ),
     ipw_weight_range = sprintf(
       "%.2f (%.2f, %.2f)",
       ipw_mean_weight, ipw_min_weight, ipw_max_weight
@@ -4475,6 +4653,20 @@ rtab7_ipw_results <- rtab7_ipw_results[
     ipw_p_raw_fmt,
     ipw_p_fdr_fmt,
 
+    ipw_model_c_statistic,
+    ipw_c_statistic_fmt,
+
+    ipw_raw_mean,
+    ipw_raw_min,
+    ipw_raw_p05,
+    ipw_raw_p25,
+    ipw_raw_p50,
+    ipw_raw_p75,
+    ipw_raw_p95,
+    ipw_raw_max,
+    ipw_mean_min_max,
+    ipw_percentiles,
+
     ipw_mean_weight,
     ipw_min_weight,
     ipw_max_weight,
@@ -4517,7 +4709,9 @@ rtab7_ipw_results_html <- rtab7_ipw_results |>
     ipw_p_raw_fmt = html("P"),
     ipw_p_fdr_fmt = html("FDR-adj. P"),
 
-    ipw_weight_range = "Stabilised Weight, Mean (Min, Max)"
+    ipw_c_statistic_fmt = "C-statistic",
+    ipw_mean_min_max = "Mean (Min, Max)",
+    ipw_percentiles = "Percentiles (5th, 25th, 50th, 75th, 95th)"
   ) |>
   cols_align(
     align = "left",
@@ -4532,31 +4726,45 @@ rtab7_ipw_results_html <- rtab7_ipw_results |>
       ipw_mean_ci,
       ipw_p_raw_fmt,
       ipw_p_fdr_fmt,
-      ipw_weight_range
+      ipw_c_statistic_fmt,
+      ipw_mean_min_max,
+      ipw_percentiles
     )
   ) |>
-  cols_hide(
+    cols_hide(
     columns = c(
       n_population,
       n_observed,
       pct_observed,
-  
+
       cc_mean_change,
       cc_ci_low,
       cc_ci_high,
       cc_p_raw,
       cc_p_fdr,
-  
+
       ipw_mean_change,
       ipw_ci_low,
       ipw_ci_high,
       ipw_p_raw,
       ipw_p_fdr,
-  
+
+      ipw_model_c_statistic,
+
+      ipw_raw_mean,
+      ipw_raw_min,
+      ipw_raw_p05,
+      ipw_raw_p25,
+      ipw_raw_p50,
+      ipw_raw_p75,
+      ipw_raw_p95,
+      ipw_raw_max,
+
       ipw_mean_weight,
       ipw_min_weight,
       ipw_max_weight,
-  
+      ipw_weight_range,
+
       fdr_family
     )
   ) |>
@@ -4570,11 +4778,11 @@ rtab7_ipw_results_html <- rtab7_ipw_results |>
   ) |>
   tab_spanner(
     label = "IPW Estimate",
-    columns = c(ipw_mean_ci, ipw_p_raw_fmt, ipw_p_fdr_fmt)
+    columns = c(ipw_mean_ci, ipw_p_raw_fmt, ipw_p_fdr_fmt, ipw_c_statistic_fmt)
   ) |>
   tab_spanner(
     label = "IPW Diagnostics",
-    columns = c(ipw_weight_range)
+    columns = c(ipw_mean_min_max, ipw_percentiles)
   ) |>
   tab_options(
     table.font.size = px(12),
@@ -4596,6 +4804,105 @@ gtsave(
 )
 
 ```
+
+c) Histograms for IPWs
+```{r}
+#------------------------------------------------------------------------------#
+# Plot IPW distributions for every model in the final table
+
+# Create a clear label identifying each fitted model
+rtab7_ipw_weights_long[
+  ,
+  model_label := fifelse(
+    subgroup == "Full Sample",
+    paste0(measure, " — ", scale),
+    paste0(measure, " — ", subgroup)
+  )
+]
+
+# Retain the same broad ordering as the final table
+rtab7_ipw_weights_long[
+  ,
+  model_group_order := fifelse(
+    subgroup_type_label == "Primary Weight Outcomes", 1L,
+    fifelse(
+      subgroup_type_label == "Secondary Blood Test Outcomes", 2L,
+      fifelse(
+        subgroup_type_label ==
+          "Secondary HbA1c Outcomes by Baseline Category",
+        3L,
+        99L
+      )
+    )
+  )
+]
+
+model_order <- unique(
+  rtab7_ipw_weights_long[
+    order(model_group_order),
+    model_label
+  ]
+)
+
+rtab7_ipw_weights_long[
+  ,
+  model_label := factor(
+    model_label,
+    levels = model_order
+  )
+]
+
+# Faceted histogram
+rtab7extra_ipw_histograms <- ggplot(
+  rtab7_ipw_weights_long,
+  aes(x = ipw)
+) +
+  geom_histogram(
+    bins = 30,
+    colour = "black",
+    boundary = 0
+  ) +
+  geom_vline(
+    xintercept = 1,
+    linetype = "dashed",
+    linewidth = 0.4
+  ) +
+  facet_wrap(
+    vars(model_label),
+    scales = "free_y",
+    ncol = 3
+  ) +
+  labs(
+    title = "Distribution of Stabilised Inverse Probability Weights",
+    x = "Stabilised inverse probability weight",
+    y = "Number of participants"
+  ) +
+  theme(
+    legend.position = "none",
+    strip.text = element_text(size = 8),
+    axis.text = element_text(size = 8),
+    axis.title = element_text(size = 9),
+    plot.title = element_text(size = 11)
+  )
+
+rtab7extra_ipw_histograms
+
+
+#------------------------------------------------------------------------------#
+# Save histograms
+
+ggsave(
+  filename = paste0(
+    "Final Outputs/rtab7extra-ipw-histograms.png"
+  ),
+  plot = rtab7extra_ipw_histograms,
+  width = 14,
+  height = 12,
+  dpi = 300
+)
+
+```
+
 
 
 ################################################################################ 
