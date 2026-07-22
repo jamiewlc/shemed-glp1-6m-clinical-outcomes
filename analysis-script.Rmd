@@ -1209,7 +1209,7 @@ paired_change_table <- function(dt,
                                 fu_var,
                                 subgroup_var = NULL,         # NULL or character vector
                                 measure_label = NULL,
-                                include_full_sample = TRUE,  # <-- ADD THIS
+                                include_full_sample = TRUE,
                                 pct_denominator = c("baseline", "followup"),
                                 digits_change = 2,
                                 digits_p = 3) {
@@ -1642,7 +1642,7 @@ rfig2_ttest_results[
   subgroup_order2 := 999L
 ]
 
-# Final row order (don’t drop subgroup_order2 until after this)
+# Final row order
 data.table::setorder(
   rfig2_ttest_results,
   measure,
@@ -2796,7 +2796,7 @@ tab_bmi_trans_na_incl[, row_total := rowSums(.SD), .SDcols = cat_order]
 # Convert count columns to character so assignment of strings is legal
 tab_bmi_trans_na_incl[, (cat_order) := lapply(.SD, as.character), .SDcols = cat_order]
 
-# Now overwrite with "n (row%)"
+# Overwrite with "n (row%)"
 tab_bmi_trans_na_incl[
   row_total > 0,
   (cat_order) := Map(
@@ -2855,7 +2855,7 @@ tab_bmi_trans_na_excl[, row_total := rowSums(.SD), .SDcols = cat_order_cc]
 # Convert count columns to character so assignment of strings is legal
 tab_bmi_trans_na_excl[, (cat_order_cc) := lapply(.SD, as.character), .SDcols = cat_order_cc]
 
-# Now overwrite with "n (row%)"
+# Overwrite with "n (row%)"
 tab_bmi_trans_na_excl[
   row_total > 0,
   (cat_order_cc) := Map(
@@ -3000,7 +3000,7 @@ rtab5a_desctab_missing_pairchange
 
 #------------------------------------------------------------------------------#
 # Export table
-## Easiest way is the export through RStudio viewer (save as webpage)
+## Export manually from the RStudio Viewer if required
 
 
 ```
@@ -3102,7 +3102,7 @@ rtab5b_desctab_missing_pairwt
 
 #------------------------------------------------------------------------------#
 # Export table
-## Easiest way is the export through RStudio viewer (save as webpage)
+## Export manually from the RStudio Viewer if required
 
 ```
 
@@ -3220,7 +3220,7 @@ rtab5c_desctab_missing_pairblood
 
 #------------------------------------------------------------------------------#
 # Export table
-## Easiest way is the export through RStudio viewer (save as webpage)
+## Export manually from the RStudio Viewer if required
 
 ```
 
@@ -3350,7 +3350,7 @@ rtab6_descstat_sample
 
 #------------------------------------------------------------------------------#
 # Export table
-## Easiest way is the export through RStudio viewer (save as webpage)
+## Export manually from the RStudio Viewer if required
 ## Then print as PDF through a browswer or Adobe Acrobat
 
 
@@ -5005,7 +5005,7 @@ mtab1_descstat_wt
 
 #------------------------------------------------------------------------------#
 # Export table
-## Easiest way is the export through RStudio viewer (save as webpage)
+## Export manually from the RStudio Viewer if required
 ## Then print as PDF through a browswer or Adobe Acrobat
 
 ```
@@ -6494,15 +6494,6 @@ mfig3_stratplot <-
     plot.tag = element_text(face = "bold", size = 16),
     plot.tag.position = c(0, 0.955)      # top left, manually change height as necessary
   )
-
-# Add y axis label (removed now that alphabetic annotations are used in nature formatting)
-#mfig3_stratplot <- ggdraw(mfig3_stratplot_core) +
-#  draw_label(
-#    "Mean Weight Change (kg)",
-#    angle = 90,
-#    x = 0.01, y = 0.6, hjust = 0.5, vjust = 0.5,
-#    size = 12
-#  )
 
 plot(mfig3_stratplot)
 
@@ -8535,7 +8526,7 @@ stab1_descstat_age
 
 #------------------------------------------------------------------------------#
 # Export table
-## Easiest way is the export through RStudio viewer (save as webpage)
+## Export manually from the RStudio Viewer if required
 ## Then print as PDF through a browswer or Adobe Acrobat
 
 ```
@@ -11231,7 +11222,7 @@ build_4_for_drug <- function(drug_name, show_x_last_row = TRUE) {
     dt[!is.na(wt_kg_0m_cat)],
     "wt_kg_0m_cat", "Baseline Weight", pal_wtgrp,
     panel_title = paste0(
-      #drug_name,  # drug name removed as only mounjaro showed (add ": " if needed)
+      #drug_name omitted because only mounjaro is displayed
       "Stratified by Baseline Weight"),
     p_tbl = p_tbl,
     show_x = FALSE
@@ -11241,7 +11232,7 @@ build_4_for_drug <- function(drug_name, show_x_last_row = TRUE) {
     dt[!is.na(age_cat5)],
     "age_cat5", "Age Group", pal_age,
     panel_title = paste0(
-      #drug_name,  # drug name removed as only mounjaro showed (add ": " if needed)
+      #drug_name omitted because only mounjaro is displayed
       "Stratified by Age Group"),
     p_tbl = p_tbl,
     show_x = FALSE
@@ -11251,7 +11242,7 @@ build_4_for_drug <- function(drug_name, show_x_last_row = TRUE) {
     dt[!is.na(area_imd_qt)],
     "area_imd_qt", "IMD Quintile", pal_imd,
     panel_title = paste0(
-      #drug_name,  # drug name removed as only mounjaro showed (add ": " if needed)
+      #drug_name omitted because only mounjaro is displayed
       "Stratified by IMD Quintiles"),
     p_tbl = p_tbl,
     show_x = FALSE
@@ -11261,7 +11252,7 @@ build_4_for_drug <- function(drug_name, show_x_last_row = TRUE) {
     dt[!is.na(eth_bin)],
     "eth_bin", "Ethnicity", pal_eth,
     panel_title = paste0(
-      #drug_name,  # drug name removed as only mounjaro showed (add ": " if needed)
+      #drug_name omitted because only mounjaro is displayed
       "Stratified by Ethnicity"),
     p_tbl = p_tbl,
     show_x = show_x_last_row
@@ -11273,18 +11264,6 @@ build_4_for_drug <- function(drug_name, show_x_last_row = TRUE) {
 m_pan <- build_4_for_drug("Mounjaro", show_x_last_row = TRUE)
 w_pan <- build_4_for_drug("Wegovy",   show_x_last_row = TRUE)
 
-# Reference code for plotting mounjaro AND wegovy (now retired)
-# Row-wise (2 columns, 4 rows): (M | W) stacked vertically
-#sfig6_dose_subgrp_core <-
-#  (m_pan$wtgrp | w_pan$wtgrp) /
-#  (m_pan$age   | w_pan$age)   /
-#  (m_pan$imd   | w_pan$imd)   /
-#  (m_pan$eth   | w_pan$eth) +
-#  plot_layout(heights = c(1, 1, 1, 1)) +
-#  plot_annotation(
-#    theme = theme(plot.title = element_text(size = 16))
-#  )
-
 # 2x2 grid (Mounjaro ONLY)
 sfig6_dose_subgrp <-
   ((wrap_elements(m_pan$wtgrp) | wrap_elements(m_pan$age)) /
@@ -11295,17 +11274,6 @@ sfig6_dose_subgrp <-
     plot.tag = element_text(face = "bold", size = 16),
     plot.tag.position = c(0.05, 0.955)    # top left, manually change height as necessary
   )
-
-# Shared y-axis label like Fig4 (removed now due to alphabetical labels)
-#sfig6_dose_subgrp <- ggdraw(sfig6_dose_subgrp_core) +
-#  draw_label(
-#    "Mean Dose (mg)",
-#    angle = 90,
-#    x = 0.01, y = 0.5, hjust = 0.5, vjust = 0.5,
-#    size = 12
-#  )
-
-#plot(sfig6_dose_subgrp_core)
 
 
 #------------------------------------------------------------------------------
@@ -11375,7 +11343,7 @@ sfig7_tab_hba1c_diab_trans_na_incl[, row_total := rowSums(.SD), .SDcols = cat_or
 # Convert count columns to character so assignment of strings is legal
 sfig7_tab_hba1c_diab_trans_na_incl[, (cat_order) := lapply(.SD, as.character), .SDcols = cat_order]
 
-# Now overwrite with "n (row%)"
+# Overwrite with "n (row%)"
 sfig7_tab_hba1c_diab_trans_na_incl[
   row_total > 0,
   (cat_order) := Map(
@@ -11418,7 +11386,7 @@ sfig7_tab_hba1c_diab_trans_na_excl[, row_total := rowSums(.SD), .SDcols = cat_or
 # Convert count columns to character so assignment of strings is legal
 sfig7_tab_hba1c_diab_trans_na_excl[, (cat_order_cc) := lapply(.SD, as.character), .SDcols = cat_order_cc]
 
-# Now overwrite with "n (row%)"
+# Overwrite with "n (row%)"
 sfig7_tab_hba1c_diab_trans_na_excl[
   row_total > 0,
   (cat_order_cc) := Map(
@@ -11614,7 +11582,7 @@ sankey_tight <- sfig7_sankey_diab_evol +
 tab_plot_tight <- tab_plot +
   theme(plot.margin = margin(t = 0, r = 0, b = 0, l = 0))
 
-# Stack Sankey + table (now the table will fill the width)
+# Stack Sankey + table
 sfig7_sankey_diab_evol_full <-
   sfig7_sankey_diab_evol /
   tab_plot +
@@ -11623,7 +11591,7 @@ sfig7_sankey_diab_evol_full <-
   theme(
     legend.position = "bottom",
     plot.tag = element_text(face = "bold", size = 12),
-    plot.tag.position = c(0.01, 0.995)    # top left, manually change height as necessary
+    plot.tag.position = c(0.01, 0.995)    # top left
   )
 
 
