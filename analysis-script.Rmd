@@ -260,6 +260,9 @@ fig_theme <- theme_minimal(base_size = 12) +
     axis.title.y = element_text(margin = margin(r = 15)),
     axis.line.x  = element_line(colour = "black", linewidth = 0.6),
     axis.line.y  = element_line(colour = "black", linewidth = 0.6),
+    axis.ticks = element_line(colour = "black", linewidth = 0.6),
+    axis.ticks.length = grid::unit(2, "mm"),
+    axis.text = element_text(colour = "black"),
     plot.margin  = margin(12, 12, 12, 12),
     legend.position = "top",
     panel.grid.major = element_blank(),
@@ -9493,6 +9496,7 @@ sfig3a_km_attr_full <- ggsurvplot(
   risk.table.y.text.col = FALSE,
   xlab                = "Weeks Since GLP-1 Initiation",
   ylab                = "Proportion of Patients (%)",
+  xlim                = c(0, 26),
   break.time.by       = 2,
   palette             = full_cols
 )
@@ -9512,11 +9516,12 @@ sfig3a_km_attr_full$plot <- sfig3a_km_attr_full$plot +
 
 # Edit risk table styling
 sfig3a_km_attr_full$table <- sfig3a_km_attr_full$table +
-  coord_cartesian(clip = "off") +  # prevent table clipping on the right
+  coord_cartesian(xlim = c(0, 26), clip = "off") +  # prevent table clipping on the right
   theme(
     plot.title   = element_text(size = 12, margin = margin(b = 6)),
     plot.margin = margin(t = 0, r = 2, b = 0, l = 2),
     axis.ticks.x = element_blank(),
+    axis.text.x  = element_text(margin = margin(t = 6)),
     axis.title.x  = element_blank(),
     # keep space, but hide strata axis
     axis.text.y  = element_text(colour = "transparent"),
