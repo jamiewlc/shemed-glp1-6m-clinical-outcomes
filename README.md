@@ -1,4 +1,4 @@
-# Analysis Code for: Real world, digital-first delivery of GLP-1 receptor agonist therapy in women
+# Analysis code for: Real world, digital-first delivery of GLP-1 receptor agonist therapy in women
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18821943.svg)](https://doi.org/10.5281/zenodo.18821943)
 
