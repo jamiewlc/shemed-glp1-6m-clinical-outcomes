@@ -3,7 +3,7 @@
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18821943.svg)](https://doi.org/10.5281/zenodo.18821943)
 
 Code implementing analyses from the paper: 
-> Deanfield J, Wong JLC, Katsoulis M, Deanfield E, Freemantle N, Thakkar R, Patel R, Joy R, Noble M, Ryan DH. Digital-first delivery of GLP-1 receptor agonist therapy in a large real-world cohort of women. (Manuscript under review).
+> Deanfield J, Wong JLC, Katsoulis M, Deanfield E, Thakkar R, Patel R, Joy R, Noble M, Ryan DH. Real world, digital-first delivery of GLP-1 receptor agonist therapy in women. (Manuscript under review).
 
 
 ## Overview
@@ -38,4 +38,4 @@ All figures are generated directly from model outputs within the script.
 
 ## Version
 
-This repository corresponds to the version of the code used for manuscript submission (v1.0.0).
+This repository corresponds to the version of the code used for manuscript submission (v4.0.0).
